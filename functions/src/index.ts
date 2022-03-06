@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions";
-import { getShopTableRows, harvest } from './helpers';
+import { getShopTableRows } from './helpers';
+import { harvest } from "./main";
 import * as cors from 'cors';
 
 const corsOptions = {
@@ -8,9 +9,14 @@ const corsOptions = {
 const corsHandler = cors(corsOptions);
 
 export const harvestFood = functions.https.onRequest(async (request, response) => {
-    await harvest('rweue.wam', 'mice', 'none').then(res => {
-        response.send(res);
-    })
+    corsHandler(request, response, async () => {
+        const addr = request.body.addr;
+        const foodType = request.body.foodType;
+        const enhancer = request.body.enhancer;
+        await harvest(addr, foodType, enhancer).then(res => {
+            response.send(res);
+        });
+    });
 });
 
 export const getShopItems = functions.https.onRequest(async (request, response) => {
@@ -20,5 +26,5 @@ export const getShopItems = functions.https.onRequest(async (request, response) 
             const rplmRows = rows.filter((row: any) => row.CollectionName === 'nft.reptile');
             response.send(rplmRows);
         });
-    })
+    });
 });

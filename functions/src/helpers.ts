@@ -71,23 +71,20 @@ export const rewardRplmNft = (recipient: string) => {
     mintNft(recipient, schemaName, templateId);
 }
 
-export const harvest = async (recipient: string, type: string, enhancer: string) => {
+export const mintHarvestNft = async (recipient: string, type: string, enhancer: string) => {
     interface templateStats {
-        [$type: string]: {
+        [type: string]: {
             schema: string,
             templateIds: templateIds
         }
     }
 
     interface templateIds {
-        hundred: string,
-        ten: string,
-        five: string,
-        one: string
+        [type: string]: string
     }
 
     const templateStats: templateStats = {
-        mice: {
+        mouse: {
             schema: `food`,
             templateIds: {
                 hundred: `374720`,
@@ -254,40 +251,37 @@ const chooseRand = (probs: Array<number>) => {
     return -1;
 }
 
-//@ts-ignore 
-const getAcctColStats = async (account: string, colName: string) => {
+export const getAcctColStats = async (account: string, colName: string) => {
     const acctColEndpoint: string = `${atomicEndpoint}/accounts/${account}/${colName}`;
     try {
-        const result = fetch(acctColEndpoint).then(resp => resp.json);
+        const result = await fetch(acctColEndpoint).then(resp => resp.json());
         return result;
     } catch (error) {
         console.log(error);
     }
-    return -1;
+    return false;
 }
 
-//@ts-ignore
-const getAcctStats = async (account: string, colNames: Array<string>) => {
+export const getAcctStats = async (account: string, colNames: Array<string>) => {
     const collectionNames: string = colNames.join(`%2C%20`);
     const acctEndpoint: string = `${atomicEndpoint}/accounts/${account}?collection_whitelist=${collectionNames}`;
     try {
-        const result = fetch(acctEndpoint).then(resp => resp.json);
+        const result = await fetch(acctEndpoint).then(resp => resp.json());
         return result;
     } catch (error) {
         console.log(error);
     }
-    return -1;
+    return false;
 }
 
-//@ts-ignore
-const getAcctBurns = async (account: string, colNames: Array<string>) => {
+export const getAcctBurns = async (account: string, colNames: Array<string>) => {
     const collectionNames: string = colNames.join('%2C%20');
     const burnEndpoint: string = `${atomicEndpoint}/burns/${account}?collection_whitelist=${collectionNames}`;
     try {
-        const result = fetch(burnEndpoint).then(resp => resp.json);
+        const result = await fetch(burnEndpoint).then(resp => resp.json());
         return result;
     } catch (error) {
         console.log(error);
     }
-    return -1;
+    return false;
 }
