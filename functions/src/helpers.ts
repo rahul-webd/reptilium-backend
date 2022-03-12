@@ -52,7 +52,7 @@ const atomicEndpoints: Array<String> = [
 const collectionName: string = `nft.reptile`;
 
 const rpcEndpoint: string = `https://${rpcEndpoints[0]}`;
-const atomicEndpoint: string = `https://${atomicEndpoints[0]}/atomicassets/v1`;
+const atomicEndpoint: string = `https://${atomicEndpoints[2]}/atomicassets/v1`;
 
 const rpc = new JsonRpc(rpcEndpoint, { fetch });
 const api = signatureProvider 
@@ -123,11 +123,11 @@ export const mintHarvestNft = async (recipient: string, type: string, enhancer: 
         if (chosenRand !== -1 && chosenRand < 4) {
             const tmptToReward = probsMap.get(chosenRand);
             if (typeof tmptToReward !== 'undefined') {
-                const res = await mintNft(recipient, typeSchmName, tmptToReward);
-                return res;
+                const trx = await mintNft(recipient, typeSchmName, tmptToReward);
+                return { tmptToReward, trx};
             }
         }
-        return -1;
+        return { error: 'some error occurred' };
     }
 
     if (enhancer !== 'none') {
@@ -215,7 +215,7 @@ const mintNft = async (recipient: string, schemaName: string, templateId: string
             console.log(error.json, null, 2);
         }
     }
-    return -1;
+    return { error: 'some error occured' };
 }
 
 export const getShopTableRows = async () => {
