@@ -14,7 +14,9 @@ interface simpleNames {
 interface user {
     energy: number,
     energy_generation_points: number,
-    claim_timestamp: object,
+    energy_holding_capacity: number,
+    energy_holder_points: number,
+    claim_timestamp: number,
     harvest_boosters: harvestBoosters
 }
 
@@ -27,32 +29,47 @@ interface harvestBooster {
     prev_burns: number
 }
 
-interface energyBoosters {
+interface simpleStat {
     id: string,
     count: number
 }
 
 const energyGenPoints: simpleCount = {
-    "382048": 1,
-    "382045": 2,
-    "363214": 5,
-    "363215": 5
+    "382045": 1,
+    "363214": 1,
+    "363215": 1
+}
+
+// For these Ids, the asset count is not being calculated
+const basicEnergyIds: Array<string> = ['382045', '363214', '363215']
+
+const energyHolderPoints: simpleCount = {
+    "382048": 2,
+    "363214": 2,
+    "363215": 2
 }
 
 const harvestBoosterNames: simpleNames = {
-    "363235": "super_food",
-    "363230": "table_scraps"
+    "363230": "super_food",
+    "363235": "table_scraps"
 }
 
 const colNames = ['nft.reptile', 'nrgsyndicate']
 
 const energyMultipler = 5;
-const renewInterval = 2 * 60 * 60 * 1000;
+const renewInterval = 1 * 60 * 60 * 1000;
 
-export const getUser = async (addr: string, tmpts: Array<energyBoosters>) => {
+export const getUser = async (addr: string, tmpts: Array<simpleStat>) => {
     let u = addr;
-    // check if tmptIds actually exist with the user
-    const p: number = getEnergyBoosterPoints(tmpts);
+
+    /*
+    taking chain fetch load to client and doing first check by comparing it 
+    with prev val in db to save calls to chain.
+    If different - then doing check on server side for truth.
+    */
+
+    const p: number = calcEnergyBoosterPoints(tmpts);
+    const hp: number = calcEnergyHolderPoints(tmpts);
     u = getDbUserName(addr);
     const usersRef = admin.database().ref(`users/${u}`);
     let res = {}
@@ -61,22 +78,25 @@ export const getUser = async (addr: string, tmpts: Array<energyBoosters>) => {
         if (snapshot.exists()) {
             const user = snapshot.val();
             const userToUpdate = { ...user };
+            const e = user.energy;
             const gp = user.energy_generation_points;
-            const prevTimeStamp = user.claim_timestamp;
-            const curTimestamp = admin.database.ServerValue.TIMESTAMP;
+            const ehc = user.energy_holding_capacity;
+            const uhp = user.energy_holder_points;
+            const prevTime = user.claim_timestamp;
 
-            // checking if energy gen points have changed
-            if (gp !== p) {
-                const { p } = await getEnergy(addr);
-                userToUpdate.energy_generation_points = p;
+            const es = await checkEnergyStats(gp, p, hp, uhp, addr);
+            if (es !== -1) {
+                userToUpdate.energy_generation_points = es.egp;
+                userToUpdate.energy_holder_points = es.ehp;
+            }
+
+            const ie = checkIntervalEnergy(prevTime, gp, ehc, e);
+            if (ie !== -1) {
+                userToUpdate.energy = ie.ne;
+                userToUpdate.claim_timestamp = ie.curTime;
+                console.log('curTime: ', ie.curTime);
             }
             
-            // adding energy if renewal interval has passed
-            if (curTimestamp >= (prevTimeStamp + renewInterval)) {
-                const gp = userToUpdate.energy_generation_points;
-                userToUpdate.energy = gp * energyMultipler; 
-                userToUpdate.claim_timestamp = curTimestamp;
-            }
 
             //TODO remove extra unnecessary calls to db
             await usersRef.update(userToUpdate, (err) => {
@@ -96,12 +116,15 @@ export const getUser = async (addr: string, tmpts: Array<energyBoosters>) => {
 }
 
 const createUser = async (addr: string, u: string) => {
-    const { e, p } = await getEnergy(addr);
+    const { e, egp, hc, ehp } = await getEnergyStats(addr);
     const usersRef = admin.database().ref('users');
+    const curTime: number = getCurTime();
     const userVal: user = {
         energy: e,
-        energy_generation_points: p,
-        claim_timestamp: admin.database.ServerValue.TIMESTAMP,
+        energy_generation_points: egp,
+        energy_holding_capacity: hc,
+        energy_holder_points: ehp,
+        claim_timestamp: curTime,
         harvest_boosters: {
             super_food: {
                 count: 0,
@@ -116,7 +139,7 @@ const createUser = async (addr: string, u: string) => {
     const hbb = await getHarvestBoosterBurns(addr);
     const hbbKeys = Object.keys(hbb);
     hbbKeys.forEach(id => {
-        userVal.harvest_boosters[harvestBoosterNames[id]].count = hbb[id];
+        userVal.harvest_boosters[harvestBoosterNames[id]].prev_burns = hbb[id];
     });
 
     let res = {}
@@ -133,7 +156,7 @@ const createUser = async (addr: string, u: string) => {
 // only adding harvest boosters now when the user burned them in app
 export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) => {
     const u = getDbUserName(addr);
-    const harvestBoosters: harvestBoosters = {
+    let harvestBoosters: harvestBoosters = {
         super_food: {
             count: 0,
             prev_burns: 0
@@ -146,22 +169,24 @@ export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) =
     const curBurns = await getHarvestBoosterBurns(addr);
     const harvestBoostersRef = admin.database().ref(`users/${u}/harvest_boosters`);
     let res = {}
-    harvestBoostersRef.get().then(snapshot => {
-
+    await harvestBoostersRef.get().then(async snapshot => {
         if (snapshot.exists()) {
             const hbVal = snapshot.val();
-            tmptIds.forEach((tmptId: string) => {
-                const tmptName = harvestBoosterNames[tmptId];
-                const shb = hbVal[tmptName];
-                const count = shb.count;
-                const p = shb.prev_burns;
-                const c = curBurns[tmptId];
-                const countToAdd = c - p;
-                harvestBoosters[tmptName].count = count + countToAdd;
-                harvestBoosters[tmptName].prev_burns = c;
-            });
+            harvestBoosters = { ...hbVal }
+            if (tmptIds.length !== 0) {
+                tmptIds.forEach((tmptId: string) => {
+                    const tmptName = harvestBoosterNames[tmptId];
+                    const shb = hbVal[tmptName];
+                    const count = shb.count;
+                    const p = shb.prev_burns;
+                    const c = curBurns[tmptId];
+                    const countToAdd = c - p;
+                    harvestBoosters[tmptName].count = count + countToAdd;
+                    harvestBoosters[tmptName].prev_burns = c;
+                });
+            }
         }
-        harvestBoostersRef.update(harvestBoosters, (err) => {
+        await harvestBoostersRef.update(harvestBoosters, (err) => {
             if (err) {
                 res = { error: err };
             } 
@@ -170,6 +195,8 @@ export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) =
     }, err => {
         res = { error: err };
     });
+    console.log(res);
+    
     return res;
 }
 
@@ -178,7 +205,7 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
         none: 150,
         super_food: 500,
         table_scraps: 100
-    }
+    }    
 
     const u = getDbUserName(addr);
     let rewardOdd = odds[enhancer];
@@ -189,22 +216,24 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
     await userRef.get().then(async snapshot => {
         if (snapshot.exists()) {
             const userVal = snapshot.val();
-            const userToUpdate = userVal;
+            const userToUpdate = { ...userVal };
             const energy = userVal.energy;
 
             //TODO interface for res
-            const harvest = async () => {
+            const harvest = async () => {                
                 const harvestRes = await tryHarvest(addr, foodType, enhancer, rewardOdd);
+                
                 await userRef.update(userToUpdate, (err) => {
                     if (err) {
                         res = { error: err, harvest: harvestRes }
-                    } else {
+                    } else {                        
                         res = { user: userToUpdate, harvest: harvestRes }
                     }
                 })
             };
 
             if (enhancer === 'none') {
+                
                 if (energy !== 0) {
                     userToUpdate.energy = energy - energyMultipler;
                     await harvest();
@@ -212,10 +241,11 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
                     res = { error: 'user has no energy' }
                 }
             } else {
+                
                 let ec = userVal['harvest_boosters'][enhancer].count;
-
+                
                 if (ec !== 0) {
-                    userToUpdate[enhancer].count = ec--;
+                    userToUpdate['harvest_boosters'][enhancer].count = ec - 1;
                     await harvest();
                 } else {
                     res = { error: `user has no ${enhancer}` }
@@ -241,22 +271,55 @@ const tryHarvest = async (addr: string, foodType: string, enhancer: string, odds
     return res;
 }
 
-const getEnergy = async (addr: string) => {
-    const p = await getEnergyBoosters(addr).then(res => getEnergyBoosterPoints(res));
+const getEnergyStats = async (addr: string) => {
+    const acctStats = await getColStats(addr);
+    const energy = await getEnergy(acctStats);
+    const energyHolderPoints = await getEnergyHolderPoints(acctStats);
+    return {
+        e: energy.e,
+        egp: energy.p,
+        hc: energyHolderPoints.hc,
+        ehp: energyHolderPoints.p
+    }
+}
+
+const getEnergy = async (acctStats: any) => {
+    const p = await getEnergyBoosters(acctStats).then(res => calcEnergyBoosterPoints(res));
     const e = p * energyMultipler;
     return { e, p }
 }
 
-const getEnergyBoosterPoints = (tmpts: Array<energyBoosters>) => {
+const getEnergyHolderPoints = async (acctStats: any) => {
+    const p = await getEnergyHolders(acctStats).then(res => calcEnergyHolderPoints(res));
+    const hc = p * energyMultipler;
+    return { hc, p }
+}
+
+const calcEnergyBoosterPoints = (tmpts: Array<simpleStat>) => {
     const tmptIds: Array<string> = tmpts.map((tmpt: any) => tmpt.id);
     const p: number = tmptIds.reduce((prev, cur, i) => {
-        return prev + (energyGenPoints[cur] * tmpts[i].count);
+        const ep = energyGenPoints[cur];
+        const ec = tmpts[i].count;
+        if (basicEnergyIds.includes(cur)) {
+            return prev + ep * 1; // more than 1 of these templates do not provide extra energy
+        } else {
+            return prev + (ep * ec);
+        }
     }, 0);
     return p;
 }
 
-const getEnergyBoosters = async (addr: string) => {
-    const acctStats = await getAcctStats(addr, colNames);
+const calcEnergyHolderPoints = (tmpts: Array<simpleStat>) => {
+    const tmptIds: Array<string> = tmpts.map((tmpt: any) => tmpt.id);
+    const p: number = tmptIds.reduce((prev, cur, i) => {
+        const hp = energyHolderPoints[cur];
+        const hc = tmpts[i].count;
+        return prev + (hp * hc);
+    }, 0);
+    return p;
+}
+
+const getEnergyBoosters = async (acctStats: any) => {
     const btKeys: Array<string> = Object.keys(energyGenPoints);
     const ubt = acctStats.data.templates.filter((tmpt: any) => 
         btKeys.includes(tmpt.template_id));
@@ -265,8 +328,26 @@ const getEnergyBoosters = async (addr: string) => {
             id: tmpt.template_id,
             count: tmpt.assets
         }
-    })
+    });
     return res;
+}
+
+const getEnergyHolders = async (acctStats: any) => {
+    const hdKeys: Array<string> = Object.keys(energyHolderPoints);
+    const uht = acctStats.data.templates.filter((tmpt: any) => 
+        hdKeys.includes(tmpt.template_id));
+    const res = uht.map((tmpt: any) => {
+        return {
+            id: tmpt.template_id,
+            count: tmpt.assets
+        }
+    });
+    return res;
+}
+
+const getColStats = async (addr: string) => {
+    const acctStats = await getAcctStats(addr, colNames);
+    return acctStats;
 }
 
 const getHarvestBoosterBurns = async (addr: string) => {
@@ -284,7 +365,7 @@ const getHarvestBoosterBurns = async (addr: string) => {
 
         if (burnTemplates.length !== 0) {
             burnTemplates.forEach((bt: any) => {
-                harvestBoosterBurns[bt.template_id] = bt.assets;
+                harvestBoosterBurns[bt.template_id] = Number(bt.assets);
             });
         }
     }
@@ -306,4 +387,43 @@ const getUserLuck = () => {
     rand = rand * 1000;
     rand = rand + 1;
     return rand;
+}
+
+const getCurTime = () => {
+    const d = new Date();
+    const curTime = d.getTime();
+    return curTime;
+}
+
+const checkIntervalEnergy = (prevTime: number, gp: number, ehc: number, 
+    e: number) => {
+    const curTime = getCurTime();
+
+    // adding energy if renewal interval has passed
+    if (curTime >= (prevTime + renewInterval)) {
+        const passedTime = curTime - prevTime;
+        const intervalsPassed = Number((passedTime/renewInterval).toFixed(0));
+        let be = gp * energyMultipler; // base energy
+        let ne = 0;
+
+        const te = (be * intervalsPassed) + e;
+        if (ehc >= te)  {
+            ne = te;
+        } else {
+            ne = ehc;
+        }
+        return { ne, curTime }
+    }
+    return -1;
+}
+
+const checkEnergyStats = async (gp: number, p: number, hp: number, uhp: number, 
+    addr: string) => {
+    // checking if energy gen points have changed
+
+    if (gp !== p || hp !== uhp) {
+        const { egp, ehp } = await getEnergyStats(addr);
+        return { egp, ehp }
+    }
+    return -1;
 }
