@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { getAcctBurns, getAcctStats, mintHarvestNft } from './helpers';
+import { getAcctBurns, getAcctStats, getTableRows, mintHarvestNft } from './helpers';
 
 admin.initializeApp();
 
@@ -153,7 +153,7 @@ const createUser = async (addr: string, u: string) => {
     return res;
 }
 
-// only adding harvest boosters now when the user burned them in app
+// getting burns of assets can be expanded for other assets when added.
 export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) => {
     const u = getDbUserName(addr);
     let harvestBoosters: harvestBoosters = {
@@ -173,18 +173,16 @@ export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) =
         if (snapshot.exists()) {
             const hbVal = snapshot.val();
             harvestBoosters = { ...hbVal }
-            if (tmptIds.length !== 0) {
-                tmptIds.forEach((tmptId: string) => {
-                    const tmptName = harvestBoosterNames[tmptId];
-                    const shb = hbVal[tmptName];
-                    const count = shb.count;
-                    const p = shb.prev_burns;
-                    const c = curBurns[tmptId];
-                    const countToAdd = c - p;
-                    harvestBoosters[tmptName].count = count + countToAdd;
-                    harvestBoosters[tmptName].prev_burns = c;
-                });
-            }
+            tmptIds.forEach((tmptId: string) => {
+                const tmptName = harvestBoosterNames[tmptId];
+                const shb = hbVal[tmptName];
+                const count = shb.count;
+                const p = shb.prev_burns;
+                const c = curBurns[tmptId];
+                const countToAdd = c - p;
+                harvestBoosters[tmptName].count = count + countToAdd;
+                harvestBoosters[tmptName].prev_burns = c;
+            });
         }
         await harvestBoostersRef.update(harvestBoosters, (err) => {
             if (err) {
@@ -258,6 +256,108 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
         res = { error: err }
     });
     return res;
+}
+
+const getHarvestBoosterBurns = async (addr: string) => {
+    const boosterIds = ['363235', '363230'];
+    const harvestBoosterBurns: simpleCount = {
+        '363235': 0,
+        '363230': 0
+    }
+
+    const res = await getAcctBurns(addr, [colNames[0]]);
+    const templates = res.data.templates
+    if (templates.length !== 0) {
+        const burnTemplates = templates.filter((template: any) => 
+            boosterIds.includes(template.template_id));
+
+        if (burnTemplates.length !== 0) {
+            burnTemplates.forEach((bt: any) => {
+                harvestBoosterBurns[bt.template_id] = Number(bt.assets);
+            });
+        }
+    }
+    return harvestBoosterBurns;
+}
+
+export const setShopItems = async () => {
+    const shopCode: string = `shop.cait`;
+    const scope: string = `shop.cait`;
+    const tables: simpleNames = {
+        menu: `menu`,
+        limits: `limits`
+    }
+    const limit: number = 9999;
+
+    const menuRows: any = (await getTableRows(shopCode, scope, tables.menu, limit) as any).rows;
+    const limitsRows: any = (await getTableRows(shopCode, scope, tables.limits, limit) as any).rows;
+
+    if (menuRows && limitsRows) {
+        const colMenuRows = menuRows.filter((menuRow: any) => 
+            menuRow.CollectionName === colNames[0]);
+        const colMenuMemos = colMenuRows.map((colMenuRow: any) =>
+            colMenuRow.Memo)
+        const colLimitsRows = limitsRows.filter((limitsRow: any) =>
+            colMenuMemos.includes(limitsRow.Memo));
+        const sortedColLimitRows: Array<any> = [colMenuMemos.length];
+
+        colLimitsRows.forEach((colLimitRow: any) => {
+            const limitRowMemo = colLimitRow.Memo;
+            const menuRowIndex = colMenuMemos.indexOf(limitRowMemo);
+            sortedColLimitRows[menuRowIndex] = colLimitRow;
+        });
+
+        const shopItemRows = colMenuRows.map((menuRow: any, index: number) => {
+            const memo = menuRow.Memo;
+            const templateId = menuRow.TemplateId;
+            const price = menuRow.Price;
+            const limitRow = sortedColLimitRows[index];
+            
+            let limit = {}
+            if (limitRow) {
+                const startTime = limitRow.StartTime;
+                const stopTime = limitRow.StopTime;
+                const leftToSell = limitRow.LeftToSell;
+                const maxToSell = limitRow.MaxToSell;
+                const maxPerAccount  = limitRow.MaxPerAccount;
+                const secondsBetween = limitRow.SecondsBetween;
+                limit = { startTime, stopTime, leftToSell, maxToSell,
+                    maxPerAccount, secondsBetween }
+            }    
+            return { memo, templateId, price, limit }
+        });
+
+        const shopItemsRef = admin.database().ref('shop_items');
+        await shopItemsRef.set(shopItemRows, err => {
+            if (err) {
+                console.log(err);
+                return;
+            }
+            console.log(`shop items update completed`);
+        });
+    }
+    return;
+}
+
+export const getShopItems = async () => {
+    const shopItemsRef = admin.database().ref('shop_items');
+    let res = {}
+    await shopItemsRef.get().then(snapshot => {
+        if (snapshot.exists()) {            
+            res = snapshot.val();
+        } else {
+            res = { error: 'no shop items found' }
+        }
+    }, err => {
+        res = { error: err }
+    });
+    return res;
+}
+
+export const refreshBurns = async (addr: string) => {
+    const boosterIds = ['363230', '363235']
+    const harvestBoosters = await addHarvestBoosters(addr, boosterIds);
+    return harvestBoosters;
 }
 
 const tryHarvest = async (addr: string, foodType: string, enhancer: string, odds: number) => {
@@ -348,28 +448,6 @@ const getEnergyHolders = async (acctStats: any) => {
 const getColStats = async (addr: string) => {
     const acctStats = await getAcctStats(addr, colNames);
     return acctStats;
-}
-
-const getHarvestBoosterBurns = async (addr: string) => {
-    const boosterIds = ['363235', '363230'];
-    const harvestBoosterBurns: simpleCount = {
-        '363235': 0,
-        '363230': 0
-    }
-
-    const res = await getAcctBurns(addr, [colNames[0]]);
-    const templates = res.data.templates
-    if (templates.length !== 0) {
-        const burnTemplates = templates.filter((template: any) => 
-            boosterIds.includes(template.template_id));
-
-        if (burnTemplates.length !== 0) {
-            burnTemplates.forEach((bt: any) => {
-                harvestBoosterBurns[bt.template_id] = Number(bt.assets);
-            });
-        }
-    }
-    return harvestBoosterBurns;
 }
 
 const getDbUserName = (addr: string) => {

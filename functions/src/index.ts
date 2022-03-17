@@ -3,7 +3,7 @@ import * as cors from 'cors';
 import * as session from 'express-session';
 import 'dotenv/config';
 import { WaxAuthServer } from "wax-auth";
-import { addHarvestBoosters, getUser, harvestFood } from './dbHelpers';
+import { addHarvestBoosters, getShopItems, getUser, harvestFood, refreshBurns, setShopItems } from './main';
 const { FirestoreStore } = require('@google-cloud/connect-firestore');
 const { Firestore } = require('@google-cloud/firestore');
 
@@ -156,6 +156,27 @@ if (secret) {
             // const enhancer = 'none';
             const result = await harvestFood(addr, foodType, enhancer);
             resp.send(result);
+        });
+    });
+
+    exports.setShopItems = functions.pubsub.schedule('every 24 hours').onRun(async () => {
+        await setShopItems();
+        return null;
+    });
+
+    exports.getShopItems = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const shopItems = await getShopItems();
+            resp.send(shopItems);
+        });
+    });
+
+    exports.refreshBurns = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const hb = await refreshBurns(addr);
+            resp.send(hb);
         });
     });
 }

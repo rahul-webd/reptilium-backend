@@ -31,11 +31,9 @@ const atomicEndpoints: Array<String> = [
     `wax.api.atomicassets.io`,
     `wax-aa.eu.eosamsterdam.net`,
     `aa.wax.blacklusion.io`,
-    `wax.blockcrafters.io`,
     `api.wax-aa.bountyblok.io`,
     `atomic-wax-mainnet.wecan.dev`,
     `aa.dapplica.io`,
-    `api-wax-aa.eosarabia.net`,
     `aa-api-wax.eosauthority.com`,
     `wax-aa.eosdublin.io`,
     `wax-atomic-api.eosphere.io`,
@@ -45,14 +43,16 @@ const atomicEndpoints: Array<String> = [
     `wax.hkeos.com/aa`,
     `atomic.ledgerwise.io`,
     `atomic.tokengamer.io`,
-    `atomic.hivebp.io`,
-    `atomic2.hivebp.io`,
 ]
 
 const collectionName: string = `nft.reptile`;
 
 const rpcEndpoint: string = `https://${rpcEndpoints[0]}`;
-const atomicEndpoint: string = `https://${atomicEndpoints[2]}/atomicassets/v1`;
+
+const getAtomicEndpoint = () => {
+    const rand = Math.floor(Math.random() * atomicEndpoints.length);
+    return `https://${atomicEndpoints[rand]}/atomicassets/v1`;
+}
 
 const rpc = new JsonRpc(rpcEndpoint, { fetch });
 const api = signatureProvider 
@@ -218,14 +218,15 @@ const mintNft = async (recipient: string, schemaName: string, templateId: string
     return { error: 'some error occured' };
 }
 
-export const getShopTableRows = async () => {
+export const getTableRows = async (code: string, scope: string, table: string, 
+    limit: number) => {
     try {
         const tableRows = await rpc.get_table_rows({
             json: true,
-            code: `shop.cait`,
-            scope: `shop.cait`,
-            table: `menu`,
-            limit: 9999
+            code: code,
+            scope: scope,
+            table: table,
+            limit: limit
         });
         return tableRows;
     } catch (error) {
@@ -234,7 +235,7 @@ export const getShopTableRows = async () => {
             console.log(error.json, null, 2);
         }
     }
-    return -1;
+    return false;
 }
 
 const chooseRand = (probs: Array<number>) => {
@@ -252,7 +253,8 @@ const chooseRand = (probs: Array<number>) => {
 }
 
 export const getAcctColStats = async (account: string, colName: string) => {
-    const acctColEndpoint: string = `${atomicEndpoint}/accounts/${account}/${colName}`;
+    const ae = getAtomicEndpoint();
+    const acctColEndpoint: string = `${ae}/accounts/${account}/${colName}`;
     try {
         const result = await fetch(acctColEndpoint).then(resp => resp.json());
         return result;
@@ -263,8 +265,9 @@ export const getAcctColStats = async (account: string, colName: string) => {
 }
 
 export const getAcctStats = async (account: string, colNames: Array<string>) => {
+    const ae = getAtomicEndpoint();
     const collectionNames: string = colNames.join(`%2C%20`);
-    const acctEndpoint: string = `${atomicEndpoint}/accounts/${account}?collection_whitelist=${collectionNames}`;
+    const acctEndpoint: string = `${ae}/accounts/${account}?collection_whitelist=${collectionNames}`;
     try {
         const result = await fetch(acctEndpoint).then(resp => resp.json());
         return result;
@@ -275,8 +278,9 @@ export const getAcctStats = async (account: string, colNames: Array<string>) => 
 }
 
 export const getAcctBurns = async (account: string, colNames: Array<string>) => {
+    const ae = getAtomicEndpoint();
     const collectionNames: string = colNames.join('%2C%20');
-    const burnEndpoint: string = `${atomicEndpoint}/burns/${account}?collection_whitelist=${collectionNames}`;
+    const burnEndpoint: string = `${ae}/burns/${account}?collection_whitelist=${collectionNames}`;
     try {
         const result = await fetch(burnEndpoint).then(resp => resp.json());
         return result;
@@ -285,3 +289,4 @@ export const getAcctBurns = async (account: string, colNames: Array<string>) => 
     }
     return false;
 }
+
