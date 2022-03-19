@@ -3,7 +3,7 @@ import * as cors from 'cors';
 import * as session from 'express-session';
 import 'dotenv/config';
 import { WaxAuthServer } from "wax-auth";
-import { addHarvestBoosters, getShopItems, getUser, harvestFood, refreshBurns, setShopItems } from './main';
+import { addHarvestBoosters, getShopItems, getTgUserName, getUser, getUserAddr, harvestFood, refreshBurns, setShopItems, setTgUserName } from './main';
 const { FirestoreStore } = require('@google-cloud/connect-firestore');
 const { Firestore } = require('@google-cloud/firestore');
 
@@ -122,13 +122,8 @@ if (secret) {
             const body = req.body;
             const addr = body.addr;
             const tmpts = body.tmpts;
-            // const addr = 'ansb.wam';
-            // const tmpts = [
-            //     {
-            //         id: '382048',
-            //         count: 1
-            //     }
-            // ]
+            // const addr = 'mspvi.wam';
+            // const tmpts: any = []
             const user = await getUser(addr, tmpts);
             
             resp.send(user);
@@ -177,6 +172,37 @@ if (secret) {
             const addr = body.addr;
             const hb = await refreshBurns(addr);
             resp.send(hb);
+        });
+    });
+
+    exports.setTgUserName = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const tgUserName = body.tgUserName;
+            // const addr = 'rweue.wam';
+            // const tgUserName = 'rahul_443';
+            const res = await setTgUserName(addr, tgUserName);
+            resp.send(res);
+        });
+    });
+
+    exports.getTgUserName = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const res = await getTgUserName(addr);
+            resp.send(res);
+        });
+    });
+
+    exports.getUserAddr = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const tgUserName = body.tgUserName;
+            // const tgUserName = 'rahul_443';
+            const res = await getUserAddr(tgUserName);
+            resp.send(res);
         });
     });
 }

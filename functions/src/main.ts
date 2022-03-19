@@ -94,7 +94,6 @@ export const getUser = async (addr: string, tmpts: Array<simpleStat>) => {
             if (ie !== -1) {
                 userToUpdate.energy = ie.ne;
                 userToUpdate.claim_timestamp = ie.curTime;
-                console.log('curTime: ', ie.curTime);
             }
             
 
@@ -143,7 +142,7 @@ const createUser = async (addr: string, u: string) => {
     });
 
     let res = {}
-    await usersRef.child(u).set(userVal, (err) => {
+    await usersRef.child(u).update(userVal, (err) => {
         if (err) {
             res = { error: err };
         }
@@ -358,6 +357,100 @@ export const refreshBurns = async (addr: string) => {
     const boosterIds = ['363230', '363235']
     const harvestBoosters = await addHarvestBoosters(addr, boosterIds);
     return harvestBoosters;
+}
+
+export const setTgUserName = async (addr: string, tgUserName: string) => {
+    const u = getDbUserName(addr);
+    const userRef = admin.database().ref(`users/${u}`);
+    const usersTgRef = admin.database().ref(`usersTg`);
+    const val = { tgUserName }
+    const tgVal = { [tgUserName]: addr }
+    let res: any = {}
+    await userRef.child('tgUserName').get().then(snapshot => {
+        if (snapshot.exists()) {
+            return snapshot.val();
+        }
+        return false;
+    }, err => {
+        res = { error: err }
+        return false;
+    }).then(async tgUserName => {
+        let r;
+        if (tgUserName) {
+            await usersTgRef.child(tgUserName).remove((err) => {
+                if (err) {
+                    res = { error: err }
+                    r = false;
+                } else {
+                    r = true;
+                }
+            })
+        }
+        if (res.error) {
+            r = false;
+        } else {
+            r = true;
+        }
+        return r;
+    }).then(async resp => {
+        let r;
+        if (resp) {
+            await userRef.update(val, err => {
+                if (err) {
+                    res = { error: err }
+                    r = false;
+                } else {
+                    res = { val };
+                    r = true;
+                }
+            });
+        } else {
+            r = false;
+        }
+        return r;
+    }).then(async resp => {
+        if (resp) {
+            await usersTgRef.update(tgVal, err => {
+                if (err) {
+                    res = { error: err }
+                } else {
+                    res = { ...res, tgVal }
+                }
+            });
+        }
+    });
+    return res;
+}
+
+export const getTgUserName = async (addr: string) => {
+    const u = getDbUserName(addr);
+    const tgUserNameRef = admin.database().ref(`users/${u}/tgUserName`);
+    let res = {}
+    await tgUserNameRef.get().then(snapshot => {
+        if (snapshot.exists()) {
+            res = { val: snapshot.val() };
+        } else {
+            res = { error: 'no data existis' }
+        }
+    }, err => {
+        res = { error: err }
+    });
+    return res;
+}
+
+export const getUserAddr = async (tgUserName: string) => {
+    const addrRef = admin.database().ref(`usersTg/${tgUserName}`);
+    let res = {}
+    await addrRef.get().then(snapshot => {
+        if (snapshot.exists()) {
+            res = { addr: snapshot.val() }  
+        } else {
+            res = { error: 'no data exists' }
+        }
+    }, err => {
+        res = { error: err }
+    });
+    return res;
 }
 
 const tryHarvest = async (addr: string, foodType: string, enhancer: string, odds: number) => {

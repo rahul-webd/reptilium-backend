@@ -266,7 +266,7 @@ export const getAcctColStats = async (account: string, colName: string) => {
 
 export const getAcctStats = async (account: string, colNames: Array<string>) => {
     const ae = getAtomicEndpoint();
-    const collectionNames: string = colNames.join(`%2C%20`);
+    const collectionNames: string = colNames.join(`%2C`);
     const acctEndpoint: string = `${ae}/accounts/${account}?collection_whitelist=${collectionNames}`;
     try {
         const result = await fetch(acctEndpoint).then(resp => resp.json());
@@ -279,7 +279,7 @@ export const getAcctStats = async (account: string, colNames: Array<string>) => 
 
 export const getAcctBurns = async (account: string, colNames: Array<string>) => {
     const ae = getAtomicEndpoint();
-    const collectionNames: string = colNames.join('%2C%20');
+    const collectionNames: string = colNames.join('%2C');
     const burnEndpoint: string = `${ae}/burns/${account}?collection_whitelist=${collectionNames}`;
     try {
         const result = await fetch(burnEndpoint).then(resp => resp.json());
