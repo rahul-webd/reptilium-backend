@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { getAcctBurns, getAcctStats, getTableRows, mintHarvestNft } from './helpers';
+import { chooseRand, getAcctBurns, getAcctStats, getTableRows, getTemplates } from './helpers';
 
 admin.initializeApp();
 
@@ -34,10 +34,29 @@ interface simpleStat {
     count: number
 }
 
+interface reptileTemplate {
+    name: string,
+    img: string,
+    video: string,
+    Rarity: string,
+    animalName: string,
+    Breed: string,
+    genusSpecies: string,
+    genesTraits: string,
+    Region: string,
+    rplmPerWeek: number,
+    Breeder: string,
+    Set: string
+}
+
+interface reptileTemplateObj {
+    [templateId: string]: reptileTemplate
+}
+
 const energyGenPoints: simpleCount = {
-    "382045": 1,
-    "363214": 1,
-    "363215": 1
+    "382045": 2,
+    "363214": 2,
+    "363215": 2
 }
 
 // For these Ids, the asset count is not being calculated
@@ -198,6 +217,7 @@ export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) =
 }
 
 export const harvestFood = async (addr: string, foodType: string, enhancer: string) => {
+    const dbName = getDbUserName(addr);
     const odds: simpleCount = {
         none: 150,
         super_food: 500,
@@ -218,7 +238,7 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
 
             //TODO interface for res
             const harvest = async () => {                
-                const harvestRes = await tryHarvest(addr, foodType, enhancer, rewardOdd);
+                const harvestRes = await tryHarvest(dbName, foodType, enhancer, rewardOdd);
                 
                 await userRef.update(userToUpdate, (err) => {
                     if (err) {
@@ -254,6 +274,22 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
     }, err => {
         res = { error: err }
     });
+    return res;
+}
+
+export const getFoodCount = async (addr: string, foodType: string) => {
+    const a = getDbUserName(addr);
+    const foodRef = admin.database().ref(`foodCount/${a}/${foodType}`);
+    let res: any;
+    await foodRef.get().then(snapshot => {
+        if (snapshot.exists()) {
+            res = { count: snapshot.val() };
+        } else {
+            res = { count: 0 }
+        }
+    }).catch(err => {
+        res = { error: err }
+    })
     return res;
 }
 
@@ -457,10 +493,72 @@ const tryHarvest = async (addr: string, foodType: string, enhancer: string, odds
     const luck = getUserLuck();
     let res = {}
     if (luck <= odds) {
-        res = await mintHarvestNft(addr, foodType, enhancer);
+        res = await updateHarvestCount(addr, foodType, enhancer);
     } else {
         res = { error: 'harvest unsuccessful' }
     }
+    return res;
+}
+
+const updateHarvestCount = async (addr: string, type: string, enhancer: string) => {
+    // odds within 1000
+    const probs: Array<number> = [0, 20, 130, 850];
+    const enhancedProbs: Array<number> = [20, 100, 180, 700];
+
+    let res = {}
+
+    const probsMap: Map<number, number> = new Map([
+        [0, 100],
+        [1, 10],
+        [2, 5],
+        [3, 1]
+    ]);
+
+    const reward = async (probType: Array<number>) => {
+        const chosenRand: number = chooseRand(probType);
+        if (chosenRand !== -1 && chosenRand < 4) {
+            const count = probsMap.get(chosenRand);
+            if (count) {
+
+                // TODO weird BUG - data not updating on children in firebase even when no validation is set.
+                const farmTypeRef = admin.database().ref(`foodCount/${addr}/${type}`);
+                await farmTypeRef.get().then(async snapshot => {
+                    if (!snapshot.exists()) {
+                        await farmTypeRef.set(count, err => {
+                            if (err) {
+                                res = { error: err }
+                            } else {
+                                res = { count: count }
+                            }
+                        });
+                    } else {
+                        const pc = snapshot.val();
+                        const nc = pc + count; 
+                        await farmTypeRef.set(nc, 
+                            err => {
+                                if (err) {
+                                    res = { error: err }
+                                } else {
+                                    res = { count }
+                                }
+                            });
+                    }
+                }).catch(err => {
+                    console.log(err);
+                    res = { error: err }
+                });
+            }
+        } else {
+            res = { error: 'some error occured' }
+        }
+    }
+
+    if (enhancer !== 'none') {
+        await reward(enhancedProbs);
+    } else  {
+        await reward(probs);
+    }
+
     return res;
 }
 
@@ -597,4 +695,64 @@ const checkEnergyStats = async (gp: number, p: number, hp: number, uhp: number,
         return { egp, ehp }
     }
     return -1;
+}
+
+export const setReptileTemplates = async () => {
+    const colName: string = 'nft.reptile';
+    const reptileSchemas: Array<string> = ['pythons', 'beardedragon', 'boas', 'geckos']
+    let res: Array<reptileTemplateObj> = []
+    const payload: any = {}
+
+    for (const rs of reptileSchemas) {
+        const templates = await getTemplates(colName, rs).then(res => res.data);
+        const tmpts = await templates.map((template: any): reptileTemplateObj => {
+            const templateId = template.template_id;
+            const immutableData = template.immutable_data;
+            return {
+                [templateId]: {
+                    name: immutableData.name || '',
+                    img: immutableData.img || '',
+                    video: immutableData.video || '',
+                    Rarity: immutableData.Rarity || '',
+                    animalName: immutableData["Animal's Name"] || '',
+                    Breed: immutableData.Breed || '',
+                    genusSpecies: immutableData["Genus Species"] || '',
+                    genesTraits: immutableData["Genes/Unique Traits"] || '',
+                    Region: immutableData.Region || '',
+                    rplmPerWeek: Number(immutableData["RPLM Per Week"]) || 0,
+                    Breeder: immutableData.Breeder || '',
+                    Set: immutableData.Set || ''
+                }
+            }
+        });
+        res = res.concat(tmpts);
+    }
+
+    res.forEach(r => {
+        const rk = Object.keys(r);
+        const key = rk[0]
+        payload[key] = r[key];
+    })
+
+    const reptileTemplatesRef = admin.database().ref('templates/reptileTemplates');
+    await reptileTemplatesRef.set(payload, err => {
+        if (err) {
+            console.log(err);
+        } else {
+            console.log('Reptile Templates Updateed');
+        }
+    });
+}
+
+export const getReptileTemplates = async () => {
+    const reptileTemplatesRef = admin.database().ref('templates/reptileTemplates');
+    let res: any = {}
+    await reptileTemplatesRef.get().then(snapshot => {
+        if (snapshot.exists()) {
+            res = snapshot.val();
+        } else {
+            res = { error: 'no data exists' }
+        }
+    });
+    return res;
 }

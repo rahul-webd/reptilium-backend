@@ -238,7 +238,7 @@ export const getTableRows = async (code: string, scope: string, table: string,
     return false;
 }
 
-const chooseRand = (probs: Array<number>) => {
+export const chooseRand = (probs: Array<number>) => {
     const rand: String = ((Math.random() * 1000) + 1).toFixed(3);
     for (let i = 0; i < probs.length; i++) {
         let probFraction: number = 0;
@@ -290,3 +290,14 @@ export const getAcctBurns = async (account: string, colNames: Array<string>) => 
     return false;
 }
 
+export const getTemplates = async (colName: string, schema: string) => {
+    const ae = getAtomicEndpoint();
+    const page: number = 1;
+    const limit: number = 1000;
+    const order: string = 'desc';
+    const sort: string = 'created';
+    const tmptEndpoint: string = `${ae}/templates?collection_name=${colName}&schema_name=${schema}&page=${page}&limit=${limit}&order=${order}&sort=${sort}`;
+    const res = await fetch(tmptEndpoint).then(resp => resp.json())
+        .catch(err => console.log(err));
+    return res;
+}

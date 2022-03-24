@@ -3,7 +3,7 @@ import * as cors from 'cors';
 import * as session from 'express-session';
 import 'dotenv/config';
 import { WaxAuthServer } from "wax-auth";
-import { addHarvestBoosters, getShopItems, getTgUserName, getUser, getUserAddr, harvestFood, refreshBurns, setShopItems, setTgUserName } from './main';
+import { addHarvestBoosters, getFoodCount, getReptileTemplates, getShopItems, getTgUserName, getUser, getUserAddr, harvestFood, refreshBurns, setReptileTemplates, setShopItems, setTgUserName } from './main';
 const { FirestoreStore } = require('@google-cloud/connect-firestore');
 const { Firestore } = require('@google-cloud/firestore');
 
@@ -146,13 +146,25 @@ if (secret) {
             const addr = body.addr;
             const foodType = body.foodType;
             const enhancer = body.enhancer;
-            // const addr = 'ansb.wam';
+            // const addr = 'mspvi.wam';
             // const foodType = 'mouse';
             // const enhancer = 'none';
             const result = await harvestFood(addr, foodType, enhancer);
             resp.send(result);
         });
     });
+
+    exports.getFoodCount = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const foodType = body.foodType;
+            // const addr = 'rweue.wam';
+            // const foodType = 'mouse';
+            const res = await getFoodCount(addr, foodType);
+            resp.send(res);
+        })
+    })
 
     exports.setShopItems = functions.pubsub.schedule('every 24 hours').onRun(async () => {
         await setShopItems();
@@ -205,4 +217,18 @@ if (secret) {
             resp.send(res);
         });
     });
+
+    exports.setReptileTemplates = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            await setReptileTemplates();
+            resp.end();
+        });
+    });
+
+    exports.getReptileTemplates = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const res = await getReptileTemplates();
+            resp.send(res);
+        })
+    })
 }
