@@ -3,7 +3,7 @@ import * as cors from 'cors';
 import * as session from 'express-session';
 import 'dotenv/config';
 import { WaxAuthServer } from "wax-auth";
-import { addHarvestBoosters, getFoodCount, getReptileTemplates, getShopItems, getTgUserName, getUser, getUserAddr, harvestFood, refreshBurns, setReptileTemplates, setShopItems, setTgUserName } from './main';
+import { addHarvestBoosters, addReptile, getFoodCount, getReptileTemplates, getShopItems, getTgUserName, getUser, getUserAddr, harvestFood, importBurnedFood, importBurnedReptiles, refreshBurns, setReptileTemplates, setShopItems, setTgUserName } from './main';
 const { FirestoreStore } = require('@google-cloud/connect-firestore');
 const { Firestore } = require('@google-cloud/firestore');
 
@@ -230,5 +230,35 @@ if (secret) {
             const res = await getReptileTemplates();
             resp.send(res);
         })
-    })
+    });
+
+    exports.addReptile = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const templateId = body.templateId;
+            const addr = body.addr;
+            const res = await addReptile(templateId, addr);
+            resp.send(res);
+        })
+    });
+
+    exports.importBurnedFood = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            // const addr = 'rweue.wam';
+            const res = await importBurnedFood(addr);
+            resp.send(res);
+        });
+    });
+
+    exports.importBurnedReptiles = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            // const addr = 'rweue.wam';
+            const res = await importBurnedReptiles(addr);
+            resp.send(res);
+        });
+    });
 }

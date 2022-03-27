@@ -1,57 +1,11 @@
 import * as admin from 'firebase-admin';
-import { chooseRand, getAcctBurns, getAcctStats, getTableRows, getTemplates } from './helpers';
+import { chooseRand, getAcctBurns, getAcctStats, getTableRows, 
+    getTemplates } from './helpers';
+import { simpleCount, simpleNames, user, harvestBoosters,
+    simpleStat, reptileTemplateObj, userReptiles } from './interfaces';
+import { initialProgress, reptileIds, reptileRarites } from './data';
 
 admin.initializeApp();
-
-interface simpleCount {
-    [id: string]: number
-}
-
-interface simpleNames {
-    [id: string]: string
-}
-
-interface user {
-    energy: number,
-    energy_generation_points: number,
-    energy_holding_capacity: number,
-    energy_holder_points: number,
-    claim_timestamp: number,
-    harvest_boosters: harvestBoosters
-}
-
-interface harvestBoosters {
-    [type: string]: harvestBooster
-}
-
-interface harvestBooster {
-    count: number,
-    prev_burns: number
-}
-
-interface simpleStat {
-    id: string,
-    count: number
-}
-
-interface reptileTemplate {
-    name: string,
-    img: string,
-    video: string,
-    Rarity: string,
-    animalName: string,
-    Breed: string,
-    genusSpecies: string,
-    genesTraits: string,
-    Region: string,
-    rplmPerWeek: number,
-    Breeder: string,
-    Set: string
-}
-
-interface reptileTemplateObj {
-    [templateId: string]: reptileTemplate
-}
 
 const energyGenPoints: simpleCount = {
     "382045": 2,
@@ -198,7 +152,8 @@ export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) =
                 const p = shb.prev_burns;
                 const c = curBurns[tmptId];
                 const countToAdd = c - p;
-                harvestBoosters[tmptName].count = count + countToAdd;
+                const newCount = count + countToAdd;
+                harvestBoosters[tmptName].count = newCount >= 0 ? newCount : 0;
                 harvestBoosters[tmptName].prev_burns = c;
             });
         }
@@ -260,9 +215,10 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
             } else {
                 
                 let ec = userVal['harvest_boosters'][enhancer].count;
+                const newEc = ec - 1
                 
                 if (ec !== 0) {
-                    userToUpdate['harvest_boosters'][enhancer].count = ec - 1;
+                    userToUpdate['harvest_boosters'][enhancer].count = newEc >= 0 ? newEc : 0;
                     await harvest();
                 } else {
                     res = { error: `user has no ${enhancer}` }
@@ -633,6 +589,218 @@ const getEnergyHolders = async (acctStats: any) => {
             count: tmpt.assets
         }
     });
+    return res;
+}
+
+const getFoodBurns = async (addr: string) => {
+    const foodTemplateIds: simpleCount = {
+        '363217': 1,
+        '363216': 1,
+        '363220': 5,
+        '363218': 5,
+        '363222': 10,
+        '363221': 10,
+        '374720': 100,
+        '374732': 100
+    }
+
+    const mouseTemplateIds = ['363217', '363220', '363222', '374720'];
+    const cricketTemplateIds = ['363216', '363218', '363221', '374732'];
+    const res = await getAcctBurns(addr, [colNames[0]]);
+    const templates = res.data.templates;
+    const mt = templates.filter((template: any) => 
+        mouseTemplateIds.includes(template.template_id));
+    const ct = templates.filter((template: any) => 
+        cricketTemplateIds.includes(template.template_id));
+    const mouseCount = mt.reduce((prev: any, cur: any) => {
+        return prev + ( cur.assets * foodTemplateIds[cur.template_id] )
+    }, 0);
+    const cricketCount = ct.reduce((prev: any, cur: any) => {
+        return prev + ( cur.assets * foodTemplateIds[cur.template_id] )
+    }, 0);
+    return {
+        mouse: mouseCount, 
+        cricket: cricketCount
+    }
+}
+
+export const importBurnedFood = async (addr: string) => {
+    const u = getDbUserName(addr);
+    const foodRef = admin.database().ref(`foodCount/${u}`);
+    let res = {}
+    await foodRef.get().then(async snapshot => {
+        let food: any = {
+            mouse: 0,
+            cricket: 0,
+            burnedFood: {
+                mouse: 0,
+                cricket: 0
+            }
+        }
+        if (snapshot.exists()) {
+            const val = snapshot.val();
+            if (val.hasOwnProperty('mouse')) {
+                food.mouse = val.mouse;
+            }
+            if (val.hasOwnProperty('cricket')) {
+                food.cricket = val.cricket;
+            }
+            if (val.hasOwnProperty('burnedFood')) {
+                food.burnedFood.mouse = val.burnedFood.mouse;
+                food.burnedFood.cricket = val.burnedFood.cricket;
+            }
+        }
+        try {
+            const newBurnedFood = await getFoodBurns(addr);
+            const mouseToAdd = newBurnedFood.mouse - food.burnedFood.mouse;
+            const cricketToAdd = newBurnedFood.cricket - food.burnedFood.cricket;
+
+            food.mouse += mouseToAdd;
+            food.cricket += cricketToAdd;
+            food.burnedFood.mouse = newBurnedFood.mouse;
+            food.burnedFood.cricket = newBurnedFood.cricket;
+
+            await foodRef.update(food, error => {
+                if (error) {
+                    res = { error }
+                } else {
+                    res = food;
+                }
+            });
+        } catch (error) {
+            res = { error }
+        }
+    }, error => {
+        res = { error }
+    });
+    return res;
+}
+
+const getAllReptileBurns = async (addr: string) => {
+    const res = await getAcctBurns(addr, [colNames[0]]);
+    const ts = res.data.templates;
+    const urt = ts.filter((t: any) => reptileIds.includes(t.template_id));
+    const r = urt.map((t: any) => {
+        const id = t.template_id;
+        const count = t.assets;
+        const progress = initialProgress[reptileRarites[id]]
+        return { id, count, progress }
+    });
+    return r;
+}
+
+export const importBurnedReptiles = async (addr: string) => {
+    const u = getDbUserName(addr);
+    const tRef = admin.database().ref(`reptileCount/${u}`);
+    let res = {}
+    await tRef.get().then(async snapshot => {
+        let ts: userReptiles = {}
+        if (snapshot.exists()){
+            ts = snapshot.val();
+        }
+        try {
+            const newTs = await getAllReptileBurns(addr);
+            newTs.forEach((t: any) => {
+                const id = t.id;
+                const count = t.count;
+                const initProg = t.progress;
+                if (!ts.hasOwnProperty(id)) {
+                    let ur: Array<simpleCount> = []
+                    for (let i = 0; i < count; i++) {
+                        ur.push({
+                            progress: initProg
+                        });
+                    }
+                    ts[id] = ur;
+                } else {
+                    const prevCount = ts[id].length;
+                    const countToAdd = count - prevCount;
+                    for (let i = 0; i < countToAdd; i++) {
+                        ts[id].push({
+                            progress: initProg
+                        });
+                    }
+                }
+            }); 
+            
+            await tRef.update(ts, error => {
+                if (error) {
+                    res = { error }
+                } else {
+                    res = ts;
+                }
+            })
+        } catch (error) {
+            res = { error }
+        }
+    }, error => {
+        res = { error }
+    });
+    return res;
+}
+
+export const getReptileBurns = async (templateId: string, addr: string) => {
+    const res = await getAcctBurns(addr, [colNames[0]]);
+    const templates = res.data.templates;
+    const template = templates.filter((template: any) => {
+        return template.template_id === templateId;
+    });
+    return template.assets;
+}
+
+export const addReptile = async (templateId: string, addr: string) => {
+    const u = getDbUserName(addr);
+    const templateRef = admin.database().ref(`reptileCount/${u}/${templateId}`);
+    let res: any;
+
+    await templateRef.get().then(async snapshot => {
+        let prevCount: number = 0;
+        let ts: Array<simpleCount> = []
+        if (snapshot.exists()) {
+            ts = snapshot.val();
+            prevCount = snapshot.val().length;
+        }
+        try {
+            let count = await getReptileBurns(templateId, addr);
+            const countToAdd = count - prevCount;
+            for (let i = 0; i < countToAdd; i++) {
+                ts.push({
+                    progress: initialProgress[reptileRarites[templateId]]
+                });
+            }
+            await templateRef.update(ts, err => {
+                if (err) {
+                    res = { error: err }
+                } else {
+                    res = ts;
+                }
+            });
+        } catch (error) {
+            res = { error }
+        }
+    }, err => {
+        if (err) {
+            res = { error: err }
+            return;
+        }
+    });
+
+    return res;
+}
+
+export const upgradeReptile = async (index: number, addr: string, foodType: string,
+    foodCount: number) => {
+    const u = getDbUserName(addr);
+    const reptRef = admin.database().ref(`users/${u}/reptiles/${index}`);
+    let res = {}
+    await reptRef.get().then(snapshot => {
+        const rept: simpleCount = { progress: 0 }
+        if (snapshot.exists()) {
+            rept.progress = snapshot.val().progress;
+        }
+    }, error => {
+        res = { error }
+    })
     return res;
 }
 
