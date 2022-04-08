@@ -3,7 +3,10 @@ import * as cors from 'cors';
 import * as session from 'express-session';
 import 'dotenv/config';
 import { WaxAuthServer } from "wax-auth";
-import { addHarvestBoosters, addReptile, getFoodCount, getReptileTemplates, getShopItems, getTgUserName, getUser, getUserAddr, harvestFood, importBurnedFood, importBurnedReptiles, refreshBurns, setReptileTemplates, setShopItems, setTgUserName } from './main';
+import { addHarvestBoosters, addReptile, feedReptile, getFood, getFoodCount, getReptile, 
+    getReptiles, getReptileTemplates, getShopItems, getSoulStone, getTgUserName, getUser, 
+    getUserAddr, harvestFood, importBurnedFood, importBurnedReptiles, redeem, refreshBurns, setReptileTemplates, 
+    setShopItems, setSoulStone, setTgUserName, spellSoulStone } from './main';
 const { FirestoreStore } = require('@google-cloud/connect-firestore');
 const { Firestore } = require('@google-cloud/firestore');
 
@@ -237,6 +240,8 @@ if (secret) {
             const body = req.body;
             const templateId = body.templateId;
             const addr = body.addr;
+            // const templateId = '256889';
+            // const addr = 'rweue.wam';
             const res = await addReptile(templateId, addr);
             resp.send(res);
         })
@@ -261,4 +266,107 @@ if (secret) {
             resp.send(res);
         });
     });
+
+    exports.getReptiles = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            // const addr = 'rweue.wam';
+            const res = await getReptiles(addr);
+            resp.send(res);
+        });
+    });
+
+    exports.getReptile = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const templateId = body.templateId;
+            // const addr = 'rweue.wam';
+            const res = await getReptile(addr, templateId);
+            resp.send(res);
+        });
+    });
+
+    exports.getFood = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const foodType = body.foodType;
+            // const addr = 'rweue.wam';
+            // const foodType = 'mouse';
+            const res = await getFood(addr, foodType);
+            resp.send(res);
+        });
+    });
+
+    exports.feedReptile = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const templateId = body.templateId;
+            const index = body.index;
+            const foodType = body.foodType;
+            const count = body.count;
+            // const addr = 'rweue.wam';
+            // const templateId = '256222';
+            // const index = 0;
+            // const foodType = 'mouse';
+            // const count = 2;
+            const res = await feedReptile(addr, templateId, index, foodType, count);
+            resp.send(res);
+        });
+    });
+
+    exports.setSoulStone = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            // const addr = 'mspvi.wam';
+            const res = await setSoulStone(addr);
+            resp.send(res);
+        });
+    });
+
+    exports.getSoulStone = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            // const addr = 'mspvi.wam';
+            const res = await getSoulStone(addr);
+            resp.send(res);
+        });
+    });
+
+    exports.spellSoulStone = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const templateId = body.templateId;
+            const index = body.index;
+            const count = body.count;
+            // const addr = 'mspvi.wam';
+            // const templateId = '257176';
+            // const index = 0;
+            // const count = 2;
+            const res = await spellSoulStone(addr, count, templateId, index);
+            resp.send(res);
+        });
+    });
+    
+    exports.redeem = functions.https.onRequest(async (req, resp) => {
+        corsHandler(req, resp, async () => {
+            const body = req.body;
+            const addr = body.addr;
+            const templateId = body.templateId;
+            const index = body.index;
+
+            // const addr = 'rweue.wam';
+            // const templateId = '257174';
+            // const index = 0;
+
+            const res = await redeem(addr, templateId, index);
+            resp.send(res);
+        })
+    })
 }

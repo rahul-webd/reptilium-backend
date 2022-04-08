@@ -1,6 +1,7 @@
 import { Api, JsonRpc, RpcError } from 'eosjs';
 import { JsSignatureProvider } from 'eosjs/dist/eosjs-jssig';
 import { TextEncoder, TextDecoder } from 'text-encoding';
+import { pythonRedeemValues } from './data';
 import fetch from 'node-fetch';
 import 'dotenv/config';
 
@@ -138,6 +139,13 @@ export const mintHarvestNft = async (recipient: string, type: string, enhancer: 
         return res;
     }
 }
+
+export const mintBreedableNft = async (recipient: string, templateId: string) => {
+    const redeemId = pythonRedeemValues[templateId];
+    const schemaName = 'game';
+    const res = await mintNft(recipient, schemaName, redeemId);
+    return res;
+} 
 
 const transferTokens = async (recipient: string, quantity: string, memo: string) => {
     try {

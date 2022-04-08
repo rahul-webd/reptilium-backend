@@ -51,3 +51,9 @@ export interface reptileTemplateObj {
 export interface userReptiles {
     [id: string]: Array<simpleCount>
 }
+
+export interface incomeTemplates {
+    id: string,
+    schema: string,
+    rpw: number
+}

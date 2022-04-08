@@ -132,6 +132,41 @@ export const reptileRarites: simpleNames = {
     '254844': 'mythic',
 }
 
+//@ts-ignore
+const breedablePythonIds: simpleNames = {
+    breedableMiina: '479089',
+    breedableKaya: '479087',
+    breedableHarietta: '479086',
+    breedableSandro: '479082',
+    breedableBaan: '479081'
+}
+
+export const pythonRedeemValues: simpleNames = {
+    '257176': '479081', 
+    '257172': '479089', 
+    '257166': '479086', 
+    '257161': '479087', 
+    '257155': '479081',
+    '257177': '479081', 
+    '257173': '479089', 
+    '257167': '479086', 
+    '257162': '479087', 
+    '257156': '479081',
+    '257178': '479081', 
+    '257174': '479089', 
+    '257168': '479086', 
+    '257163': '479087', 
+    '257157': '479081',
+    '257179': '479081', 
+    '257175': '479089', 
+    '257169': '479086', 
+    '257164': '479087', 
+    '257158': '479081',
+    '257180': '479081', 
+    '257170': '479086', 
+    '257165': '479087'
+}
+
 export const initialProgress: simpleCount = {
     common: 0,
     rare: 75,
