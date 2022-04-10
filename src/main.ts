@@ -6,8 +6,6 @@ import { simpleCount, simpleNames, user, harvestBoosters,
     simpleStat, reptileTemplateObj, userReptiles } from './interfaces';
 import { initialProgress, reptileIds, reptileRarites } from './data';
 
-admin.initializeApp();
-
 const energyGenPoints: simpleCount = {
     "382045": 2,
     "363214": 2,
@@ -1205,6 +1203,10 @@ export const getReptileTemplates = async () => {
             res = snapshot.val();
         } else {
             res = { error: 'no data exists' }
+        }
+    }, error => {
+        if (error) {
+            res = { error }
         }
     });
     return res;

@@ -71,3 +71,6 @@ firebase.json
 /prev
 
 /functions/lib
+
+key.json
+dist
