@@ -6,7 +6,7 @@ import { WaxAuthServer } from "wax-auth";
 import { addHarvestBoosters, addReptile, feedReptile, getFood, getFoodCount, getReptile, 
     getReptiles, getReptileTemplates, getShopItems, getSoulStone, getTgUserName, getUser, 
     getUserAddr, harvestFood, importBurnedFood, redeem, refreshBurns, setReptileTemplates, 
-    setSoulStone, setTgUserName, spellSoulStone, importBurnedReptiles } from './main';
+    setSoulStone, setTgUserName, spellSoulStone, importBurnedReptiles, claimReward, getLastClaim } from './main';
 import * as admin from 'firebase-admin';
 const { FirestoreStore } = require('@google-cloud/connect-firestore');
 const key = require('../key.json');
@@ -319,6 +319,20 @@ app.post('/redeem', async (req, resp) => {
     const res = await redeem(addr, templateId, index);
     resp.send(res);
 });
+
+app.post('/claim', async (req, resp) => {
+    const addr = req.body.addr;
+    // const addr = 'rweue.wam';
+    const res = await claimReward(addr);
+    resp.send(res);
+});
+
+app.post('/getLastClaim', async (req, resp) => {
+    const addr = req.body.addr;
+    // const addr = 'rweue.wam'
+    const res = await getLastClaim(addr);
+    resp.send(res);
+})
 
 app.listen(port, () => {
     console.log(`app listening on port ${port}`);

@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import { chooseRand, getAcctBurns, getAcctStats, getTableRows, 
-    getTemplates, 
+    getTemplates, getAcctColStats, transferTokens,
     mintBreedableNft} from './helpers';
 import { simpleCount, simpleNames, user, harvestBoosters,
     simpleStat, reptileTemplateObj, userReptiles } from './interfaces';
@@ -1209,5 +1209,157 @@ export const getReptileTemplates = async () => {
             res = { error }
         }
     });
+    return res;
+}
+
+export const setRewardStats = async () => {
+    const rewardStats: simpleCount = {}
+    const rewardKeys = ['Reptilium Per Week', 'RPLM/Week', 'RPLM Per Week']
+
+    const templates = await getTemplates(colNames[0], false).then(res => res.data);
+
+    for (const t of templates) {
+        const imData = t.immutable_data;
+
+        for (const rk of rewardKeys) {
+
+            if (imData.hasOwnProperty(rk)) {
+                rewardStats[t.template_id] = Number(imData[rk]);
+                break;
+            }
+        }
+    }
+
+    const ref = admin.database().ref('rewardStats');
+    ref.update(rewardStats, error => {
+        if (error) {
+            console.log(error);
+        } else {
+            console.log('data successfully added');
+        }
+    }).catch(error => {
+        console.log(error);
+    });
+}
+
+export const claimReward = async (addr: string) => {
+    const u = getDbUserName(addr);
+    let res = {}
+
+    const userTemplateStats = await getAcctColStats(addr, colNames[0])
+        .then(res => res.data);
+
+    if (userTemplateStats) {
+        const rsRef = admin.database().ref('rewardStats');
+    
+        await rsRef.get().then(async snapshot => {
+            if (snapshot.exists()) {
+
+                const ref = admin.database().ref(`users/${u}/reward_timestamp`);
+                
+                await ref.get().then(snapshot => {
+                    let lastTs: number = -1;
+
+                    if (snapshot.exists()) {
+                        lastTs = snapshot.val();
+                    }
+                    
+                    return lastTs;
+                }, error => {
+                    res = { error }
+                }).then(async lastTs => {
+                    
+                    const curTs: number = getCurTime();
+
+                    if (lastTs && (lastTs === -1 || (curTs >= (lastTs + 24 * 60 * 60 * 1000) && curTs !== -1))) {
+    
+                        const rewardStats = snapshot.val();
+                        const rewardIds = Object.keys(rewardStats);
+                        const templates = userTemplateStats.templates;
+        
+                        const claimableAmt: number = 
+                        templates.reduce((prev: number, cur: any) => {
+                            const id = cur.template_id;
+                            const count = cur.assets;
+        
+                            if (rewardIds.includes(id)) {
+                                return prev + (Number(rewardStats[id]) * count);
+                            }
+                            return prev; 
+                        }, 0);
+        
+                        const qty: string = `${(claimableAmt/7).toFixed(4)} RPLM`;
+                        const memo = `Reptilium Reward`;
+    
+                        return { qty, memo, lastTs, curTs }
+                    } else {
+                        res = { error: 'interval not completed' }
+                    }
+                    
+                    return false;
+                }).then(async r => {
+                    
+                    if (r) {
+                        const { qty, memo, lastTs, curTs } = r;
+
+                        let tsSet = true;
+
+                        await ref.set(curTs, error => {
+                            if (error) {
+                                tsSet = false;
+                            }
+                        });
+
+                        console.log(tsSet);
+
+                        if (tsSet) {
+                            const trxRes: any = await transferTokens(addr, qty, memo);
+                            console.log(trxRes);
+
+                            if (trxRes && trxRes.processed) {
+                                res = { result: 'claimed successfully', trxRes }
+                            } else {
+                                ref.set(lastTs, error => {
+                                    if (error) {
+
+                                        res = { error };
+                                    } else {
+                                        res = { error: 'claiming unsuccessful' }
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
+
+            } else {
+                res = { error: `no data found` }
+            }
+        }, error => {
+            res = { error: `couldn't fetch data` }
+        });
+    } else [
+        res = { error: `couldn't fetch data` }
+    ]
+
+    return res;
+}
+
+export const getLastClaim = async (addr: string) => {
+    const u = getDbUserName(addr);
+    let res = {}
+
+    const ref = admin.database().ref(`users/${u}/reward_timestamp`);
+    await ref.get().then(snapshot => {
+        if (snapshot.exists()) {
+
+            res = { lastClaim: snapshot.val() }
+        } else {
+            res = { error: 'no data found' }
+        }
+    }, error => {
+        res = { error }
+    });
+
     return res;
 }

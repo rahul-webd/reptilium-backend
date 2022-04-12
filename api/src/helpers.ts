@@ -3,10 +3,14 @@ import { JsSignatureProvider } from 'eosjs/dist/eosjs-jssig';
 import { TextEncoder, TextDecoder } from 'text-encoding';
 import { pythonRedeemValues } from './data';
 import fetch from 'node-fetch';
-import 'dotenv/config';
+require('dotenv').config({ path: '../.env' });
+
+const coinReptilePvk: string | undefined = process.env.COIN_REPTILE_KEY;
+const tokenSignatureProvider = typeof coinReptilePvk === 'string'
+    && new JsSignatureProvider([coinReptilePvk]);
 
 const chatReptilePvk: string | undefined = process.env.CHAT_REPTILE_KEY;
-const signatureProvider = typeof chatReptilePvk === 'string' 
+const nftSignatureProvider = typeof chatReptilePvk === 'string' 
     && new JsSignatureProvider([chatReptilePvk]);
 
 const rpcEndpoints: Array<string> = [
@@ -35,7 +39,6 @@ const atomicEndpoints: Array<String> = [
     `api.wax-aa.bountyblok.io`,
     `atomic-wax-mainnet.wecan.dev`,
     `aa.dapplica.io`,
-    `aa-api-wax.eosauthority.com`,
     `wax-aa.eosdublin.io`,
     `wax-atomic-api.eosphere.io`,
     `atomic.wax.eosrio.io`,
@@ -56,8 +59,17 @@ const getAtomicEndpoint = () => {
 }
 
 const rpc = new JsonRpc(rpcEndpoint, { fetch });
-const api = signatureProvider 
-    && new Api({ rpc, signatureProvider, textDecoder: new TextDecoder(), 
+
+const tokenApi = tokenSignatureProvider 
+    && new Api({ rpc,
+        signatureProvider: tokenSignatureProvider,
+        textDecoder: new TextDecoder(),
+        textEncoder: new TextEncoder()});
+
+const nftApi = nftSignatureProvider 
+    && new Api({ rpc, 
+            signatureProvider: nftSignatureProvider,
+            textDecoder: new TextDecoder(), 
             textEncoder: new TextEncoder() });
 
 export const rewardChatTokens = (recipient: string) => {
@@ -147,17 +159,17 @@ export const mintBreedableNft = async (recipient: string, templateId: string) =>
     return res;
 } 
 
-const transferTokens = async (recipient: string, quantity: string, memo: string) => {
+export const transferTokens = async (recipient: string, quantity: string, memo: string) => {
     try {
         const code: string = `metatoken.gm`;
-        const actor: string = `chat.reptile`;
+        const actor: string = `coin.reptile`;
 
         const actions = [{
             account: code,
             name: `transfer`,
             authorization: [{
                 actor: actor,
-                permission: `active`
+                permission: `owner`
             }],
             data: {
                 from: actor,
@@ -174,14 +186,15 @@ const transferTokens = async (recipient: string, quantity: string, memo: string)
             expireSeconds: 30
         }
 
-        const result = api && await api.transact(transaction, config);
-        console.log(result);
+        const result = tokenApi && await tokenApi.transact(transaction, config);
+        return result;
     } catch (error) {
         console.log(error);
         if (error instanceof RpcError) {
             console.log(error.json, null, 2);
         }
     }
+    return false;
 }
 
 const mintNft = async (recipient: string, schemaName: string, templateId: string) => {
@@ -215,7 +228,7 @@ const mintNft = async (recipient: string, schemaName: string, templateId: string
             expireSeconds: 30
         }
 
-        const result = api && await api.transact(transaction, config);
+        const result = nftApi && await nftApi.transact(transaction, config);
         return result
     } catch (error) {
         console.log(error);
@@ -298,13 +311,18 @@ export const getAcctBurns = async (account: string, colNames: Array<string>) => 
     return false;
 }
 
-export const getTemplates = async (colName: string, schema: string) => {
+export const getTemplates = async (colName: string, schema: string | boolean) => {
     const ae = getAtomicEndpoint();
     const page: number = 1;
     const limit: number = 1000;
     const order: string = 'desc';
     const sort: string = 'created';
-    const tmptEndpoint: string = `${ae}/templates?collection_name=${colName}&schema_name=${schema}&page=${page}&limit=${limit}&order=${order}&sort=${sort}`;
+    let tmptEndpoint: string = '';
+    if (schema) {
+        tmptEndpoint = `${ae}/templates?collection_name=${colName}&schema_name=${schema}&page=${page}&limit=${limit}&order=${order}&sort=${sort}`;
+    } else {
+        tmptEndpoint = `${ae}/templates?collection_name=${colName}&page=${page}&limit=${limit}&order=${order}&sort=${sort}`
+    }
     const res = await fetch(tmptEndpoint).then(resp => resp.json())
         .catch(err => console.log(err));
     return res;
