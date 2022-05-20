@@ -57,3 +57,26 @@ export interface incomeTemplates {
     schema: string,
     rpw: number
 }
+
+export type Schema = 'pythons' | 'geckos' | 'boas' | 'beardedragons'
+
+export type Data = {
+    data: any,
+    error: string
+}
+
+export type MediaType = {
+    media: 'img' | 'video',
+    ext: string,
+    mime: string
+}
+
+export type ResizedMedia = {
+    buffer: Buffer | undefined,
+    mime: string
+}
+
+export type ResizedMediaRes = {
+    data: ResizedMedia,
+    error: string
+}

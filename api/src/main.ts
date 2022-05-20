@@ -1,10 +1,36 @@
 import * as admin from 'firebase-admin';
-import { chooseRand, getAcctBurns, getAcctStats, getTableRows, 
-    getTemplates, getAcctColStats, transferTokens,
-    mintBreedableNft} from './helpers';
-import { simpleCount, simpleNames, user, harvestBoosters,
-    simpleStat, reptileTemplateObj, userReptiles } from './interfaces';
-import { initialProgress, reptileIds, reptileRarites } from './data';
+import { 
+    chooseRand, 
+    getAcctBurns, 
+    getAcctStats, 
+    getTemplates, 
+    getAcctColStats, 
+    transferTokens,
+    mintBreedableNft
+} from './helpers';
+import { 
+    simpleCount, 
+    simpleNames, 
+    user, 
+    harvestBoosters,
+    simpleStat, 
+    reptileTemplateObj, 
+    userReptiles, 
+    Schema,
+    Data,
+    ResizedMedia
+} from './interfaces';
+import { 
+    initialProgress, 
+    initialSoulProgress, 
+    reptileIds, 
+    reptileRarites, 
+    reptileTemplatesBySchemas
+} from './data';
+import { DataSnapshot } from '@firebase/database-types';
+import { Storage } from '@google-cloud/storage';
+import { FILESAVEERROR, INVALIDHASH } from './exceptions';
+import { resize } from './resizeMedia';
 
 const energyGenPoints: simpleCount = {
     "382045": 2,
@@ -12,7 +38,6 @@ const energyGenPoints: simpleCount = {
     "363215": 2
 }
 
-// For these Ids, the asset count is not being calculated
 const basicEnergyIds: Array<string> = ['382045', '363214', '363215']
 
 const energyHolderPoints: simpleCount = {
@@ -34,54 +59,55 @@ const renewInterval = 1 * 60 * 60 * 1000;
 export const getUser = async (addr: string, tmpts: Array<simpleStat>) => {
     let u = addr;
 
-    /*
-    taking chain fetch load to client and doing first check by comparing it 
-    with prev val in db to save calls to chain.
-    If different - then doing check on server side for truth.
-    */
-
     const p: number = calcEnergyBoosterPoints(tmpts);
     const hp: number = calcEnergyHolderPoints(tmpts);
     u = getDbUserName(addr);
     const usersRef = admin.database().ref(`users/${u}`);
     let res = {}
-    await usersRef.get().then(async snapshot => {
+    const snapshot = await usersRef.once('value').catch(err => {
+        res = { error: err }
+    })
 
-        if (snapshot.exists() && snapshot.val().hasOwnProperty('energy')) {
-            const user = snapshot.val();
-            const userToUpdate = { ...user };
-            const e = user.energy;
-            const gp = user.energy_generation_points;
-            const ehc = user.energy_holding_capacity;
-            const uhp = user.energy_holder_points;
-            const prevTime = user.claim_timestamp;
+    if (snapshot && snapshot.exists() && 
+        snapshot.val().hasOwnProperty('energy')) {
+        const user = snapshot.val();
 
-            const es = await checkEnergyStats(gp, p, hp, uhp, addr);
-            if (es !== -1) {
-                userToUpdate.energy_generation_points = es.egp;
-                userToUpdate.energy_holder_points = es.ehp;
-            }
+        res = await setUserUpdatedData(user, p, hp, addr, usersRef, res);            
+    } else {
+        const newUser = await createUser(addr, u);
+        res = newUser;
+    }
+    return res;
+}
 
-            const ie = checkIntervalEnergy(prevTime, gp, ehc, e);
-            if (ie !== -1) {
-                userToUpdate.energy = ie.ne;
-                userToUpdate.claim_timestamp = ie.curTime;
-            }
-            
+const setUserUpdatedData = async (user: any, p: any, hp: any, addr: any,
+    usersRef: any, res: any) => {
+    const userToUpdate = { ...user };
+    const e = user.energy;
+    const gp = user.energy_generation_points;
+    const ehc = user.energy_holding_capacity;
+    const uhp = user.energy_holder_points;
+    const prevTime = user.claim_timestamp;
 
-            //TODO remove extra unnecessary calls to db
-            await usersRef.update(userToUpdate, (err) => {
-                if (err) {
-                    res =  { error: err };
-                }
-                res = userToUpdate;
-            });
-        } else {
-            const newUser = await createUser(addr, u);
-            res = newUser;
+    const es = await checkEnergyStats(gp, p, hp, uhp, addr);
+    if (es !== -1) {
+        userToUpdate.energy_generation_points = es.egp;
+        userToUpdate.energy_holder_points = es.ehp;
+        userToUpdate.energy_holding_capacity = es.ehp * energyMultipler;
+    }
+
+    const ie = checkIntervalEnergy(prevTime, gp, ehc, e);
+    if (ie !== -1) {
+        userToUpdate.energy = ie.ne;
+        userToUpdate.claim_timestamp = ie.curTime;
+    }
+    
+    //TODO remove extra unnecessary calls to db
+    await usersRef.update(userToUpdate, (err: any) => {
+        if (err) {
+            res =  { error: err.name };
         }
-    }, err => {
-        res = { error: err };
+        res = userToUpdate;
     });
     return res;
 }
@@ -110,7 +136,8 @@ const createUser = async (addr: string, u: string) => {
     const hbb = await getHarvestBoosterBurns(addr);
     const hbbKeys = Object.keys(hbb);
     hbbKeys.forEach(id => {
-        userVal.harvest_boosters[harvestBoosterNames[id]].prev_burns = hbb[id];
+        userVal.harvest_boosters[harvestBoosterNames[id]].prev_burns 
+            = hbb[id];
     });
 
     let res = {}
@@ -125,7 +152,9 @@ const createUser = async (addr: string, u: string) => {
 }
 
 // getting burns of assets can be expanded for other assets when added.
-export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) => {
+export const addHarvestBoosters = async (addr: string, 
+    tmptIds: Array<string>) => {
+    
     const u = getDbUserName(addr);
     let harvestBoosters: harvestBoosters = {
         super_food: {
@@ -137,35 +166,38 @@ export const addHarvestBoosters = async (addr: string, tmptIds: Array<string>) =
             prev_burns: 0
         }
     }
+
     const curBurns = await getHarvestBoosterBurns(addr);
-    const harvestBoostersRef = admin.database().ref(`users/${u}/harvest_boosters`);
+    const harvestBoostersRef 
+        = admin.database().ref(`users/${u}/harvest_boosters`);
     let res = {}
-    await harvestBoostersRef.get().then(async snapshot => {
-        if (snapshot.exists()) {
-            const hbVal = snapshot.val();
-            harvestBoosters = { ...hbVal }
-            tmptIds.forEach((tmptId: string) => {
-                const tmptName = harvestBoosterNames[tmptId];
-                const shb = hbVal[tmptName];
-                const count = shb.count;
-                const p = shb.prev_burns;
-                const c = curBurns[tmptId];
-                const countToAdd = c - p;
-                const newCount = count + countToAdd;
-                harvestBoosters[tmptName].count = newCount >= 0 ? newCount : 0;
-                harvestBoosters[tmptName].prev_burns = c;
-            });
-        }
-        await harvestBoostersRef.update(harvestBoosters, (err) => {
-            if (err) {
-                res = { error: err };
-            } 
-            res = harvestBoosters;
-        })
-    }, err => {
-        res = { error: err };
+    const snapshot = await harvestBoostersRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        const hbVal = snapshot.val();
+
+        harvestBoosters = { ...hbVal }
+        tmptIds.forEach((tmptId: string) => {
+            const tmptName = harvestBoosterNames[tmptId];
+            const shb = hbVal[tmptName];
+            const count = shb.count;
+            const p = shb.prev_burns;
+            const c = curBurns[tmptId];
+            const countToAdd = c - p;
+            const newCount = count + countToAdd;
+            harvestBoosters[tmptName].count = newCount >= 0 ? newCount : 0;
+            harvestBoosters[tmptName].prev_burns = c;
+        });
+    }
+
+    await harvestBoostersRef.update(harvestBoosters, (err) => {
+        if (err) {
+            res = { error: err };
+        } 
+        res = harvestBoosters;
     });
-    console.log(res);
     
     return res;
 }
@@ -184,51 +216,53 @@ export const harvestFood = async (addr: string, foodType: string, enhancer: stri
 
     const userRef = admin.database().ref(`users/${u}`);
 
-    await userRef.get().then(async snapshot => {
-        if (snapshot.exists()) {
-            const userVal = snapshot.val();
-            const userToUpdate = { ...userVal };
-            const energy = userVal.energy;
-
-            //TODO interface for res
-            const harvest = async () => {                
-                const harvestRes = await tryHarvest(dbName, foodType, enhancer, rewardOdd);
-                
-                await userRef.update(userToUpdate, (err) => {
-                    if (err) {
-                        res = { error: err, harvest: harvestRes }
-                    } else {                        
-                        res = { user: userToUpdate, harvest: harvestRes }
-                    }
-                })
-            };
-
-            if (enhancer === 'none') {
-                
-                if (energy !== 0) {
-                    userToUpdate.energy = energy - energyMultipler;
-                    await harvest();
-                } else {
-                    res = { error: 'user has no energy' }
-                }
-            } else {
-                
-                let ec = userVal['harvest_boosters'][enhancer].count;
-                const newEc = ec - 1
-                
-                if (ec !== 0) {
-                    userToUpdate['harvest_boosters'][enhancer].count = newEc >= 0 ? newEc : 0;
-                    await harvest();
-                } else {
-                    res = { error: `user has no ${enhancer}` }
-                }
-            }
-        } else {
-            res = { error: 'user does not exist' }
-        }
-    }, err => {
+    const snapshot = await userRef.once('value').catch(err => {
         res = { error: err }
     });
+
+    if (snapshot && snapshot.exists()) {
+        const userVal = snapshot.val();
+        const userToUpdate = { ...userVal };
+        const energy = userVal.energy;
+
+        //TODO interface for res
+        const harvest = async () => {                
+            const harvestRes = await tryHarvest(dbName, foodType, enhancer, rewardOdd);
+            
+            await userRef.update(userToUpdate, (err: any) => {
+                if (err) {
+                    res = { error: err.name, harvest: harvestRes }
+                } else {                        
+                    res = { user: userToUpdate, harvest: harvestRes }
+                }
+            })
+        };
+
+        if (enhancer === 'none') {
+            
+            if (energy !== 0) {
+                userToUpdate.energy = energy - energyMultipler;
+                await harvest();
+            } else {
+                res = { error: 'user has no energy' }
+            }
+        } else {
+            
+            let ec = userVal['harvest_boosters'][enhancer].count;
+            const newEc = ec - 1
+
+            if (ec !== 0) {
+                userToUpdate['harvest_boosters'][enhancer].count = newEc >= 0 ? newEc : 0;
+                await harvest();
+            } else {
+                res = { error: `user has no ${enhancer}` }
+            }
+        }
+
+    } else {
+        res = { error: 'user does not exist' }
+    }
+
     return res;
 }
 
@@ -236,15 +270,18 @@ export const getFoodCount = async (addr: string, foodType: string) => {
     const a = getDbUserName(addr);
     const foodRef = admin.database().ref(`foodCount/${a}/${foodType}`);
     let res: any;
-    await foodRef.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = { count: snapshot.val() };
-        } else {
-            res = { count: 0 }
-        }
-    }).catch(err => {
-        res = { error: err }
-    })
+
+    const snapshot = await foodRef.once('value', snapshot => {
+    }, error => {
+        res = { error: error.name }
+    });
+
+    if (snapshot && snapshot.exists()) {
+        res = { count: snapshot.val() };
+    } else {
+        res = { count: 0 }
+    }
+
     return res;
 }
 
@@ -270,77 +307,20 @@ const getHarvestBoosterBurns = async (addr: string) => {
     return harvestBoosterBurns;
 }
 
-export const setShopItems = async () => {
-    const shopCode: string = `shop.cait`;
-    const scope: string = `shop.cait`;
-    const tables: simpleNames = {
-        menu: `menu`,
-        limits: `limits`
-    }
-    const limit: number = 9999;
-
-    const menuRows: any = (await getTableRows(shopCode, scope, tables.menu, limit) as any).rows;
-    const limitsRows: any = (await getTableRows(shopCode, scope, tables.limits, limit) as any).rows;
-
-    if (menuRows && limitsRows) {
-        const colMenuRows = menuRows.filter((menuRow: any) => 
-            menuRow.CollectionName === colNames[0]);
-        const colMenuMemos = colMenuRows.map((colMenuRow: any) =>
-            colMenuRow.Memo)
-        const colLimitsRows = limitsRows.filter((limitsRow: any) =>
-            colMenuMemos.includes(limitsRow.Memo));
-        const sortedColLimitRows: Array<any> = [colMenuMemos.length];
-
-        colLimitsRows.forEach((colLimitRow: any) => {
-            const limitRowMemo = colLimitRow.Memo;
-            const menuRowIndex = colMenuMemos.indexOf(limitRowMemo);
-            sortedColLimitRows[menuRowIndex] = colLimitRow;
-        });
-
-        const shopItemRows = colMenuRows.map((menuRow: any, index: number) => {
-            const memo = menuRow.Memo;
-            const templateId = menuRow.TemplateId;
-            const price = menuRow.Price;
-            const limitRow = sortedColLimitRows[index];
-            
-            let limit = {}
-            if (limitRow) {
-                const startTime = limitRow.StartTime;
-                const stopTime = limitRow.StopTime;
-                const leftToSell = limitRow.LeftToSell;
-                const maxToSell = limitRow.MaxToSell;
-                const maxPerAccount  = limitRow.MaxPerAccount;
-                const secondsBetween = limitRow.SecondsBetween;
-                limit = { startTime, stopTime, leftToSell, maxToSell,
-                    maxPerAccount, secondsBetween }
-            }    
-            return { memo, templateId, price, limit }
-        });
-
-        const shopItemsRef = admin.database().ref('shop_items');
-        await shopItemsRef.set(shopItemRows, err => {
-            if (err) {
-                console.log(err);
-                return;
-            }
-            console.log(`shop items update completed`);
-        });
-    }
-    return;
-}
-
 export const getShopItems = async () => {
     const shopItemsRef = admin.database().ref('shop_items');
     let res = {}
-    await shopItemsRef.get().then(snapshot => {
-        if (snapshot.exists()) {            
-            res = snapshot.val();
-        } else {
-            res = { error: 'no shop items found' }
-        }
-    }, err => {
+
+    const snapshot = await shopItemsRef.once('value').catch(err => {
         res = { error: err }
-    });
+    })
+
+    if (snapshot && snapshot.exists()) {            
+        res = snapshot.val();
+    } else {
+        res = { error: 'no shop items found' }
+    }
+
     return res;
 }
 
@@ -350,66 +330,60 @@ export const refreshBurns = async (addr: string) => {
     return harvestBoosters;
 }
 
-export const setTgUserName = async (addr: string, tgUserName: string) => {
+export const setTgUserName 
+    = async (addr: string, tgUserName: string) => {
+
     const u = getDbUserName(addr);
     const userRef = admin.database().ref(`users/${u}`);
     const usersTgRef = admin.database().ref(`usersTg`);
     const val = { tgUserName }
     const tgVal = { [tgUserName]: addr }
     let res: any = {}
-    await userRef.child('tgUserName').get().then(snapshot => {
-        if (snapshot.exists()) {
-            return snapshot.val();
-        }
-        return false;
-    }, err => {
-        res = { error: err }
-        return false;
-    }).then(async tgUserName => {
-        let r;
+
+    const snapshot = await userRef.child('tgUserName').once('value')
+        .catch(err => { res = { error: err } });
+
+    if (snapshot && snapshot.exists()) {
+        const tgUserName = snapshot.val();
+        
         if (tgUserName) {
+            
+            let removed: boolean = false;
             await usersTgRef.child(tgUserName).remove((err) => {
+
                 if (err) {
                     res = { error: err }
-                    r = false;
                 } else {
-                    r = true;
-                }
-            })
-        }
-        if (res.error) {
-            r = false;
-        } else {
-            r = true;
-        }
-        return r;
-    }).then(async resp => {
-        let r;
-        if (resp) {
-            await userRef.update(val, err => {
-                if (err) {
-                    res = { error: err }
-                    r = false;
-                } else {
-                    res = { val };
-                    r = true;
+                    removed = true;
                 }
             });
-        } else {
-            r = false;
+
+            let updated: boolean = false;
+
+            if (removed) {
+                await userRef.update(val, err => {
+    
+                    if (err) {
+                        res = { error: err }
+                    } else {
+                        res = { val };
+                        updated = true;
+                    }
+                });
+            }
+
+            if (updated) {
+                await usersTgRef.update(tgVal, err => {
+                    if (err) {
+                        res = { error: err }
+                    } else {
+                        res = { ...res, tgVal }
+                    }
+                });
+            }
         }
-        return r;
-    }).then(async resp => {
-        if (resp) {
-            await usersTgRef.update(tgVal, err => {
-                if (err) {
-                    res = { error: err }
-                } else {
-                    res = { ...res, tgVal }
-                }
-            });
-        }
-    });
+    }
+    
     return res;
 }
 
@@ -417,34 +391,40 @@ export const getTgUserName = async (addr: string) => {
     const u = getDbUserName(addr);
     const tgUserNameRef = admin.database().ref(`users/${u}/tgUserName`);
     let res = {}
-    await tgUserNameRef.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = { val: snapshot.val() };
-        } else {
-            res = { error: 'no data existis' }
-        }
-    }, err => {
+
+    const snapshot = await tgUserNameRef.once('value').catch(err => {
         res = { error: err }
-    });
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = { val: snapshot.val() };
+    } else {
+        res = { error: 'no data existis' }
+    }
+
     return res;
 }
 
 export const getUserAddr = async (tgUserName: string) => {
     const addrRef = admin.database().ref(`usersTg/${tgUserName}`);
     let res = {}
-    await addrRef.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = { addr: snapshot.val() }  
-        } else {
-            res = { error: 'no data exists' }
-        }
-    }, err => {
+
+    const snapshot = await addrRef.once('value').catch(err => {
         res = { error: err }
-    });
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = { addr: snapshot.val() }  
+    } else {
+        res = { error: 'no data exists' }
+    }
+
     return res;
 }
 
-const tryHarvest = async (addr: string, foodType: string, enhancer: string, odds: number) => {
+const tryHarvest = async (addr: string, foodType: string, 
+    enhancer: string, odds: number) => {
+
     const luck = getUserLuck();
     let res = {}
     if (luck <= odds) {
@@ -452,13 +432,14 @@ const tryHarvest = async (addr: string, foodType: string, enhancer: string, odds
     } else {
         res = { error: 'harvest unsuccessful' }
     }
+
     return res;
 }
 
 const updateHarvestCount = async (addr: string, type: string, enhancer: string) => {
-    // odds within 1000
+
     const probs: Array<number> = [0, 20, 130, 850];
-    const enhancedProbs: Array<number> = [20, 100, 180, 700];
+    const enhancedProbs: Array<number> = [50, 200, 250, 500];
 
     let res = {}
 
@@ -475,33 +456,35 @@ const updateHarvestCount = async (addr: string, type: string, enhancer: string) 
             const count = probsMap.get(chosenRand);
             if (count) {
 
-                // TODO weird BUG - data not updating on children in firebase even when no validation is set.
-                const farmTypeRef = admin.database().ref(`foodCount/${addr}/${type}`);
-                await farmTypeRef.get().then(async snapshot => {
-                    if (!snapshot.exists()) {
-                        await farmTypeRef.set(count, err => {
+                const farmTypeRef = admin.database()
+                    .ref(`foodCount/${addr}/${type}`);
+
+                const snapshot = await farmTypeRef.once('value')
+                .catch(err => {
+                    res = { error: err }
+                });
+
+                if (snapshot && !snapshot.exists()) {
+                    await farmTypeRef.set(count, err => {
+                        if (err) {
+                            res = { error: err }
+                        } else {
+                            res = { count: count }
+                        }
+                    });
+
+                } else if (snapshot && snapshot.exists()) {
+                    const pc = snapshot.val();
+                    const nc = pc + count; 
+                    await farmTypeRef.set(nc, 
+                        err => {
                             if (err) {
                                 res = { error: err }
                             } else {
-                                res = { count: count }
+                                res = { count }
                             }
                         });
-                    } else {
-                        const pc = snapshot.val();
-                        const nc = pc + count; 
-                        await farmTypeRef.set(nc, 
-                            err => {
-                                if (err) {
-                                    res = { error: err }
-                                } else {
-                                    res = { count }
-                                }
-                            });
-                    }
-                }).catch(err => {
-                    console.log(err);
-                    res = { error: err }
-                });
+                }
             }
         } else {
             res = { error: 'some error occured' }
@@ -530,38 +513,48 @@ const getEnergyStats = async (addr: string) => {
 }
 
 const getEnergy = async (acctStats: any) => {
-    const p = await getEnergyBoosters(acctStats).then(res => calcEnergyBoosterPoints(res));
+    const p = await getEnergyBoosters(acctStats)
+        .then(res => calcEnergyBoosterPoints(res));
     const e = p * energyMultipler;
+
     return { e, p }
 }
 
 const getEnergyHolderPoints = async (acctStats: any) => {
-    const p = await getEnergyHolders(acctStats).then(res => calcEnergyHolderPoints(res));
+    const p = await getEnergyHolders(acctStats)
+        .then(res => calcEnergyHolderPoints(res));
     const hc = p * energyMultipler;
+
     return { hc, p }
 }
 
 const calcEnergyBoosterPoints = (tmpts: Array<simpleStat>) => {
     const tmptIds: Array<string> = tmpts.map((tmpt: any) => tmpt.id);
+
     const p: number = tmptIds.reduce((prev, cur, i) => {
         const ep = energyGenPoints[cur];
         const ec = tmpts[i].count;
+
         if (basicEnergyIds.includes(cur)) {
-            return prev + ep * 1; // more than 1 of these templates do not provide extra energy
+            return prev + ep * 1; 
         } else {
             return prev + (ep * ec);
         }
     }, 0);
+
     return p;
 }
 
 const calcEnergyHolderPoints = (tmpts: Array<simpleStat>) => {
     const tmptIds: Array<string> = tmpts.map((tmpt: any) => tmpt.id);
+
     const p: number = tmptIds.reduce((prev, cur, i) => {
+
         const hp = energyHolderPoints[cur];
         const hc = tmpts[i].count;
         return prev + (hp * hc);
     }, 0);
+
     return p;
 }
 
@@ -569,12 +562,15 @@ const getEnergyBoosters = async (acctStats: any) => {
     const btKeys: Array<string> = Object.keys(energyGenPoints);
     const ubt = acctStats.data.templates.filter((tmpt: any) => 
         btKeys.includes(tmpt.template_id));
+
     const res = ubt.map((tmpt: any) => {
+
         return {
             id: tmpt.template_id,
             count: tmpt.assets
         }
     });
+
     return res;
 }
 
@@ -582,12 +578,15 @@ const getEnergyHolders = async (acctStats: any) => {
     const hdKeys: Array<string> = Object.keys(energyHolderPoints);
     const uht = acctStats.data.templates.filter((tmpt: any) => 
         hdKeys.includes(tmpt.template_id));
+
     const res = uht.map((tmpt: any) => {
+
         return {
             id: tmpt.template_id,
             count: tmpt.assets
         }
     });
+
     return res;
 }
 
@@ -651,8 +650,10 @@ export const importBurnedFood = async (addr: string) => {
         }
         try {
             const newBurnedFood = await getFoodBurns(addr);
-            const mouseToAdd = newBurnedFood.mouse - food.burnedFood.mouse;
-            const cricketToAdd = newBurnedFood.cricket - food.burnedFood.cricket;
+            const mouseToAdd 
+                = newBurnedFood.mouse - food.burnedFood.mouse;
+            const cricketToAdd 
+                = newBurnedFood.cricket - food.burnedFood.cricket;
 
             food.mouse += mouseToAdd;
             food.cricket += cricketToAdd;
@@ -678,13 +679,16 @@ export const importBurnedFood = async (addr: string) => {
 const getAllReptileBurns = async (addr: string) => {
     const res = await getAcctBurns(addr, [colNames[0]]);
     const ts = res.data.templates;
-    const urt = ts.filter((t: any) => reptileIds.includes(t.template_id));
+    const urt 
+        = ts.filter((t: any) => reptileIds.includes(t.template_id));
+
     const r = urt.map((t: any) => {
         const id = t.template_id;
         const count = t.assets;
         const progress = initialProgress[reptileRarites[id]]
         return { id, count, progress }
     });
+
     return r;
 }
 
@@ -692,9 +696,12 @@ export const importBurnedReptiles = async (addr: string) => {
     const u = getDbUserName(addr);
     const tRef = admin.database().ref(`reptileCount/${u}`);
     let res = {}
-    await tRef.get().then(async snapshot => {
-        let ts: userReptiles = {}
-        if (snapshot.exists()){
+    const snapshot = await tRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    let ts: userReptiles = {}
+        if (snapshot && snapshot.exists()){
             ts = snapshot.val();
         }
         try {
@@ -702,12 +709,13 @@ export const importBurnedReptiles = async (addr: string) => {
             newTs.forEach((t: any) => {
                 const id = t.id;
                 const count = t.count;
-                const initProg = t.progress;
+                // const initProg = t.progress;
                 if (!ts.hasOwnProperty(id)) {
                     let ur: Array<simpleCount> = []
                     for (let i = 0; i < count; i++) {
                         ur.push({
-                            progress: initProg
+                            progress: initialProgress[reptileRarites[id]],
+                            soulProgress: initialSoulProgress[reptileRarites[id]]
                         });
                     }
                     ts[id] = ur;
@@ -716,7 +724,8 @@ export const importBurnedReptiles = async (addr: string) => {
                     const countToAdd = count - prevCount;
                     for (let i = 0; i < countToAdd; i++) {
                         ts[id].push({
-                            progress: initProg
+                            progress: initialProgress[reptileRarites[id]],
+                            soulProgress: initialSoulProgress[reptileRarites[id]]
                         });
                     }
                 }
@@ -732,9 +741,98 @@ export const importBurnedReptiles = async (addr: string) => {
         } catch (error) {
             res = { error }
         }
-    }, error => {
-        res = { error }
-    });
+
+    return res;
+}
+
+export const getPythons = async (addr: string) => {
+    const u = getDbUserName(addr);
+    const ref = admin.database().ref(`reptileCount/${u}`);
+    let res = {}
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    }
+
+    return res;
+}
+export const getReptileBySchema = async (schema: Schema, addr: string) => {
+    const u = getDbUserName(addr);
+    const ref = admin.database().ref(`reptileCount/${u}`);
+    let res = {}
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        const d = snapshot.val();
+        const ids = Object.keys(d).filter((a: any) => {
+
+            switch (schema) {
+
+                case 'pythons':
+                    return reptileTemplatesBySchemas.pythons.includes(a);
+
+                case 'geckos':
+                    return reptileTemplatesBySchemas.geckos.includes(a);
+
+                case 'boas':
+                    return reptileTemplatesBySchemas.boas.includes(a);
+
+                case 'beardedragons':
+                    return reptileTemplatesBySchemas.beardedragon.includes(a);
+            }
+        });
+
+        let geckos: userReptiles = {}
+
+        for (const g of ids) {
+
+            geckos[g] = d[g]
+        }
+        res = geckos;
+
+    } else {
+        res = { error: 'no data found' }
+    }
+
+    return res;
+}
+
+export const getBeardedragons = async (addr: string) => {
+    const u = getDbUserName(addr);
+    const ref = admin.database().ref(`reptileCount/${u}`);
+    let res = {}
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    }
+
+    return res;
+}
+
+export const getBoas = async (addr: string) => {
+    const u = getDbUserName(addr);
+    const ref = admin.database().ref(`reptileCount/${u}`);
+    let res = {}
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    }
+
     return res;
 }
 
@@ -742,15 +840,15 @@ export const getReptiles = async (addr: string) => {
     const u = getDbUserName(addr);
     const ref = admin.database().ref(`reptileCount/${u}`);
     let res = {}
-    await ref.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = snapshot.val();
-        }
-    }, error => {
-        if (error) {
-            res = { error }
-        }
-    });
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    }
+
     return res;
 }
 
@@ -758,15 +856,35 @@ export const getReptile = async (addr: string, templateId: string) => {
     const u = getDbUserName(addr);
     const ref = admin.database().ref(`reptileCount/${u}/${templateId}`);
     let res = {}
-    await ref.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = snapshot.val();
-        }
-    }, error => {
-        if (error) {
-            res = { error }
-        }
-    });
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    } else {
+        res = { error: 'no data found' }
+    }
+
+    return res;
+}
+
+export const getReptileAsset 
+    = async (addr: string, templateId: string, index: number) => {
+
+    const u = getDbUserName(addr);
+    const ref = admin.database().ref(`reptileCount/${u}/${templateId}/${index}`);
+    let res = {}
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    }
+
     return res;
 }
 
@@ -774,24 +892,27 @@ export const getFood = async (addr: string, foodType: string) => {
     const u = getDbUserName(addr);
     const ref = admin.database().ref(`foodCount/${u}/${foodType}`);
     let res = {}
-    await ref.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = { count: snapshot.val() };
-        }
-    }, error => {
-        if (error) {
-            res = { error }
-        }
-    });
+
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = { count: snapshot.val() };
+    }
+
     return res;
 }
 
-export const getReptileBurns = async (templateId: string, addr: string) => {
+export const getReptileBurns 
+    = async (templateId: string, addr: string) => {
+
     const res = await getAcctBurns(addr, [colNames[0]]);
     const templates = res.data.templates;
     const template = templates.filter((template: any) => {
         return template.template_id === templateId;
     });
+
     if (template.length !== 0) {
         return template[0].assets;
     } else {
@@ -801,40 +922,42 @@ export const getReptileBurns = async (templateId: string, addr: string) => {
 
 export const addReptile = async (templateId: string, addr: string) => {
     const u = getDbUserName(addr);
-    const templateRef = admin.database().ref(`reptileCount/${u}/${templateId}`);
+    const templateRef 
+        = admin.database().ref(`reptileCount/${u}/${templateId}`);
     let res: any;
 
-    await templateRef.get().then(async snapshot => {
-        let prevCount: number = 0;
-        let ts: Array<simpleCount> = []
-        if (snapshot.exists()) {
-            ts = snapshot.val();
-            prevCount = snapshot.val().length;
-        }
-        try {
-            let count = await getReptileBurns(templateId, addr);
-            const countToAdd = count - prevCount;
-            for (let i = 0; i < countToAdd; i++) {
-                ts.push({
-                    progress: initialProgress[reptileRarites[templateId]]
-                });
-            }
-            await templateRef.set(ts, err => {
-                if (err) {
-                    res = { error: err }
-                } else {
-                    res = { added: true };
-                }
+    const snapshot = await templateRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    let prevCount: number = 0;
+    let ts: Array<simpleCount> = []
+    if (snapshot && snapshot.exists()) {
+        ts = snapshot.val();
+        prevCount = snapshot.val().length;
+    }
+
+    try {
+
+        let count = await getReptileBurns(templateId, addr);
+        const countToAdd = count - prevCount;
+        for (let i = 0; i < countToAdd; i++) {
+            ts.push({
+                progress: initialProgress[reptileRarites[templateId]],
+                soulProgress: initialSoulProgress[reptileRarites[templateId]]
             });
-        } catch (error) {
-            res = { error }
         }
-    }, err => {
-        if (err) {
-            res = { error: err }
-            return;
-        }
-    });
+        await templateRef.set(ts, err => {
+            if (err) {
+                res = { error: err }
+            } else {
+                res = { added: true };
+            }
+        });
+    } catch (error) {
+
+        res = { error }
+    }
 
     return res;
 }
@@ -847,47 +970,52 @@ export const feedReptile = async (addr: string, templateId: string, index: numbe
     const foodRef = admin.database().ref(`foodCount/${u}/${foodType}`);
     let res = {}
 
-    await foodRef.get().then(async snapshot => {
-        if (snapshot.exists()) {
-            const c = snapshot.val();
-            if (foodCount <= c) {
-                const nc = c - foodCount;
-                let r = false;
-                await foodRef.set(nc, error => {
-                    if (error) {
-                        res = { error }
-                        r = false;
-                    } else {
-                        r = true;
-                    }
-                });
-                return r;
-            } else {
-                res = { error: 'unsufficient food amount' }
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }, error => { res = { error } }).then(async r => {
-        if (r) {
-            await reptRef.get().then(async snapshot => {
-                if (snapshot.exists()) {
-                    const s = snapshot.val();
-                    const p = Number(s.progress);
-                    const nc = Number(p) + Number(foodCount);
-                    const np = { progress: nc };
-                    await reptRef.update(np, error => {
-                        if (error) {
-                            res = { error }
-                        } else {
-                            res = np
-                        }
-                    });
+    const snapshot = await foodRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    let r;
+    if (snapshot && snapshot.exists()) {
+        const c = snapshot.val();
+        if (foodCount <= c) {
+            const nc = c - foodCount;
+            r = false;
+            await foodRef.set(nc, async error => {
+                if (error) {
+                    res = { error }
+                    r = false;
+                } else {
+                    r = true;
                 }
-            }, error => { res = { error } });
+            });
+        } else {
+            res = { error: 'unsufficient food amount' }
+            r = false;
         }
-    });
+    } else {
+        r = false;
+    }
+
+    if (r) {
+        const snapshot = await reptRef.once('value', snapshot => {},
+            error => {
+                res = { error: error.name }
+            });
+
+        if (snapshot && snapshot.exists()) {
+            const s = snapshot.val();
+            const p = Number(s.progress);
+            const nc = Number(p) + Number(foodCount);
+            const np = { progress: nc };
+            await reptRef.update(np, error => {
+                if (error) {
+                    res = { error }
+                } else {
+                    res = np
+                }
+            });
+        }
+    }
     
     return res;
 }
@@ -913,10 +1041,13 @@ export const setSoulStone = async (addr: string) => {
     b = Number(b);
     const u = getDbUserName(addr);
     const soulStoneRef = admin.database().ref(`foodCount/${u}/soulStone`);
-    await soulStoneRef.get().then(async snapshot => {
-        let pb = 0;
+    const snapshot = await soulStoneRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    let pb = 0;
         let c = 0;
-        if (snapshot.exists()) {
+        if (snapshot && snapshot.exists()) {
             const v = snapshot.val();
             pb = v.prevBurn;
             c = v.count;
@@ -947,14 +1078,6 @@ export const setSoulStone = async (addr: string) => {
             res = { error: 'user has made no new burns' }
         }
 
-    }, error => {
-        if (error) {
-            res = { error }
-        } else {
-            res = { error: 'some error occured' }
-        }
-    });
-
     return res;
 }
 
@@ -962,19 +1085,15 @@ export const getSoulStone = async (addr: string) => {
     const u = getDbUserName(addr);
     const soulStoneRef = admin.database().ref(`foodCount/${u}/soulStone`);
     let res = {}
-    await soulStoneRef.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = snapshot.val();
-        } else {
-            res = { count: 0 }
-        }
-    }, error => {
-        if (error) {
-            res = { error }
-        } else {
-            res = { error: 'some error occured' }
-        }
-    });
+    const snapshot = await soulStoneRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    } else {
+        res = { count: 0 }
+    }
 
     return res;
 }
@@ -984,48 +1103,52 @@ export const spellSoulStone = async (addr: string, count: number, templateId: st
     const u = getDbUserName(addr);
     let res: any = {}
     const soulStoneRef = admin.database().ref(`foodCount/${u}/soulStone/count`);
-    await soulStoneRef.get().then(async snapshot => {
-        let c = 0;
-        let r = false;
-        if (snapshot.exists()) {
-            c = snapshot.val();
-            if (count <= c && count !== 0) {
-                const nc = c - count;
-                await soulStoneRef.set(nc, error => {
-                    if (error) {
-                        res = { error }
-                        r = false;
-                    } else {
-                        r = true;
-                    }
-                });
-            } else {
-                res = { error: 'invalid amount' }
-                r = false;
-            }
+    const snapshot = await soulStoneRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    let c = 0;
+    let r = false;
+    if (snapshot && snapshot.exists()) {
+        c = snapshot.val();
+        if (count <= c && count !== 0) {
+            const nc = c - count;
+            await soulStoneRef.set(nc, error => {
+                if (error) {
+                    res = { error }
+                    r = false;
+                } else {
+                    r = true;
+                }
+            });
         } else {
+            res = { error: 'invalid amount' }
             r = false;
         }
-        return r;
-    }).then(async r => {
-        if (r) {
-            const reptileRef = admin.database().ref(`reptileCount/${u}/${templateId}/${index}/soulProgress`);
-            await reptileRef.get().then(async snapshot => {
-                let p = 0;
-                if (snapshot.exists()) {
-                    p = snapshot.val();
-                }
-                const np = p + count;
-                await reptileRef.set(np, error => {
-                    if (error) {
-                        res = { error }
-                    } else {
-                        res = { progress: np };
-                    }
-                });
-            });
+    } else {
+        r = false;
+    }
+
+    if (r) {
+        const reptileRef = admin.database().ref(`reptileCount/${u}/${templateId}/${index}/soulProgress`);
+        const snapshot = await reptileRef.once('value').catch(err => {
+            res = { error: err }
+        })
+
+        let p = 0;
+        if (snapshot && snapshot.exists()) {
+            p = snapshot.val();
         }
-    });
+        const np = p + count;
+        await reptileRef.set(np, error => {
+            if (error) {
+                res = { error }
+            } else {
+                res = { progress: np };
+            }
+        });
+    }
+
     return res;
 }
 
@@ -1034,55 +1157,50 @@ export const redeem = async (addr: string, templateId: string,
     const u = getDbUserName(addr);
     let res = {}
 
-    const reptRef = admin.database().ref(`reptileCount/${u}/${templateId}/${index}`);
+    const reptRef 
+        = admin.database().ref(`reptileCount/${u}/${templateId}/${index}`);
     let d: any = {};
-    await reptRef.get().then(async snapshot => {
-        let r = false;
-
-        if (snapshot.exists()) {
-            d = snapshot.val();
-            const p = d.progress;
-            if (Number(p) === 1200 && !d.hasOwnProperty('redeemed')) {
-                console.log('2');
-                await reptRef.update({ ...d, redeemed: true }, async error => {
-                    if (error) {
-                        res = { error }
-                        r = false;
-                    } else {
-                        r = true;
-                    }
-                });
-            } else {
-                res = { error: 'your reptile is not mature' }
-            }
-        } else {
-            res = { error: 'no data found' }
-        }
-        return r;
-    }, error => {
-        if (error) {
-            res = { error }
-        } else {
-            res = { error: 'some error occured' }
-        }
-    }).then(async r => {
-
-        if (r && Object.keys(d).length !== 0) {
-            const trx: any = await mintBreedableNft(addr, templateId);
-
-            if (trx && !trx.error) {
-                res = { trx, wasMinted: true }
-            } else {
-                await reptRef.update({ ...d, redeemed: false }, error => {
-                    if (error) {
-                        res = { error }
-                    } else {
-                        res = { error: 'please try again' }
-                    }
-                });
-            }
-        }
+    const snapshot = await reptRef.once('value').catch(err => {
+        res = { error: err }
     })
+
+    let r = false;
+
+    if (snapshot && snapshot.exists()) {
+        d = snapshot.val();
+        const p = d.progress;
+        if (Number(p) === 1200 && !d.hasOwnProperty('redeemed')) {
+            await reptRef
+                .update({ ...d, redeemed: true }, async error => {
+                if (error) {
+                    res = { error }
+                    r = false;
+                } else {
+                    r = true;
+                }
+            });
+        } else {
+            res = { error: 'your reptile is not mature' }
+        }
+    } else {
+        res = { error: 'no data found' }
+    }
+
+    if (r && Object.keys(d).length !== 0) {
+        const trx: any = await mintBreedableNft(addr, templateId);
+
+        if (trx && !trx.error) {
+            res = { trx, wasMinted: true }
+        } else {
+            await reptRef.update({ ...d, redeemed: false }, error => {
+                if (error) {
+                    res = { error }
+                } else {
+                    res = { error: 'please try again' }
+                }
+            });
+        }
+    }
 
     return res;
 }
@@ -1100,7 +1218,6 @@ const getDbUserName = (addr: string) => {
     return dbName;
 }
 
-// luck calculated in 1000
 const getUserLuck = () => {
     let rand = Math.random();
     rand = Number(rand.toFixed(3));
@@ -1119,11 +1236,11 @@ const checkIntervalEnergy = (prevTime: number, gp: number, ehc: number,
     e: number) => {
     const curTime = getCurTime();
 
-    // adding energy if renewal interval has passed
     if (curTime >= (prevTime + renewInterval)) {
         const passedTime = curTime - prevTime;
-        const intervalsPassed = Number((passedTime/renewInterval).toFixed(0));
-        let be = gp * energyMultipler; // base energy
+        const intervalsPassed 
+            = Number((passedTime/renewInterval).toFixed(0));
+        let be = gp * energyMultipler;
         let ne = 0;
 
         const te = (be * intervalsPassed) + e;
@@ -1139,7 +1256,6 @@ const checkIntervalEnergy = (prevTime: number, gp: number, ehc: number,
 
 const checkEnergyStats = async (gp: number, p: number, hp: number, uhp: number, 
     addr: string) => {
-    // checking if energy gen points have changed
 
     if (gp !== p || hp !== uhp) {
         const { egp, ehp } = await getEnergyStats(addr);
@@ -1195,23 +1311,6 @@ export const setReptileTemplates = async () => {
     });
 }
 
-export const getReptileTemplates = async () => {
-    const reptileTemplatesRef = admin.database().ref('templates/reptileTemplates');
-    let res: any = {}
-    await reptileTemplatesRef.get().then(snapshot => {
-        if (snapshot.exists()) {
-            res = snapshot.val();
-        } else {
-            res = { error: 'no data exists' }
-        }
-    }, error => {
-        if (error) {
-            res = { error }
-        }
-    });
-    return res;
-}
-
 export const setRewardStats = async () => {
     const rewardStats: simpleCount = {}
     const rewardKeys = ['Reptilium Per Week', 'RPLM/Week', 'RPLM Per Week']
@@ -1252,95 +1351,78 @@ export const claimReward = async (addr: string) => {
     if (userTemplateStats) {
         const rsRef = admin.database().ref('rewardStats');
     
-        await rsRef.get().then(async snapshot => {
-            if (snapshot.exists()) {
+        const snapshot = await rsRef.once('value').catch(err => {
+            res = { error: err }
+        })
 
-                const ref = admin.database().ref(`users/${u}/reward_timestamp`);
-                
-                await ref.get().then(snapshot => {
-                    let lastTs: number = -1;
+        if (snapshot && snapshot.exists()) {
 
-                    if (snapshot.exists()) {
-                        lastTs = snapshot.val();
+            const ref = admin.database().ref(`users/${u}/reward_timestamp`);
+
+            const s1 = await ref.once('value').catch(err => {
+                res = { error: err }
+            })
+
+            const lastTs = s1?.val() || -1;
+            const curTs: number = getCurTime();
+
+            if (lastTs && (lastTs === -1 
+                || (curTs >= (lastTs + 24 * 60 * 60 * 1000) 
+                && curTs !== -1))) {
+
+                const rewardStats = snapshot.val();
+                const rewardIds = Object.keys(rewardStats);
+                const templates = userTemplateStats.templates;
+
+                const claimableAmt: number = 
+                templates.reduce((prev: number, cur: any) => {
+                    const id = cur.template_id;
+                    const count = cur.assets;
+
+                    if (rewardIds.includes(id)) {
+                        return prev + (Number(rewardStats[id]) * count);
                     }
-                    
-                    return lastTs;
-                }, error => {
-                    res = { error }
-                }).then(async lastTs => {
-                    
-                    const curTs: number = getCurTime();
+                    return prev; 
+                }, 0);
 
-                    if (lastTs && (lastTs === -1 || (curTs >= (lastTs + 24 * 60 * 60 * 1000) && curTs !== -1))) {
-    
-                        const rewardStats = snapshot.val();
-                        const rewardIds = Object.keys(rewardStats);
-                        const templates = userTemplateStats.templates;
-        
-                        const claimableAmt: number = 
-                        templates.reduce((prev: number, cur: any) => {
-                            const id = cur.template_id;
-                            const count = cur.assets;
-        
-                            if (rewardIds.includes(id)) {
-                                return prev + (Number(rewardStats[id]) * count);
-                            }
-                            return prev; 
-                        }, 0);
-        
-                        const qty: string = `${(claimableAmt/7).toFixed(4)} RPLM`;
-                        const memo = `Reptilium Reward`;
-    
-                        return { qty, memo, lastTs, curTs }
-                    } else {
-                        res = { error: 'interval not completed' }
-                    }
-                    
-                    return false;
-                }).then(async r => {
-                    
-                    if (r) {
-                        const { qty, memo, lastTs, curTs } = r;
+                const qty: string = `${(claimableAmt/7).toFixed(4)} RPLM`;
+                const memo = `Reptilium Reward`;
 
-                        let tsSet = true;
+                let tsSet = true;
 
-                        await ref.set(curTs, error => {
-                            if (error) {
-                                tsSet = false;
-                            }
-                        });
-
-                        console.log(tsSet);
-
-                        if (tsSet) {
-                            const trxRes: any = await transferTokens(addr, qty, memo);
-                            console.log(trxRes);
-
-                            if (trxRes && trxRes.processed) {
-                                res = { result: 'claimed successfully', trxRes }
-                            } else {
-                                ref.set(lastTs, error => {
-                                    if (error) {
-
-                                        res = { error };
-                                    } else {
-                                        res = { error: 'claiming unsuccessful' }
-                                    }
-                                });
-                            }
-                        }
+                await ref.set(curTs, error => {
+                    if (error) {
+                        tsSet = false;
                     }
                 });
 
+                if (tsSet) {
+                    const trxRes: any = await transferTokens(addr, qty, memo);
+
+                    if (trxRes && trxRes.processed) {
+                        res = { result: 'claimed successfully', trxRes }
+                    } else {
+                        ref.set(lastTs, error => {
+                            if (error) {
+
+                                res = { error };
+                            } else {
+                                res = { error: 'claiming unsuccessful' }
+                            }
+                        });
+                    }
+                }
             } else {
-                res = { error: `no data found` }
+                res = { error: 'interval not completed' }
             }
-        }, error => {
-            res = { error: `couldn't fetch data` }
-        });
-    } else [
+
+        } else {
+            res = { error: `no data found` }
+        }
+
+    } else {
         res = { error: `couldn't fetch data` }
-    ]
+    }
 
     return res;
 }
@@ -1350,16 +1432,139 @@ export const getLastClaim = async (addr: string) => {
     let res = {}
 
     const ref = admin.database().ref(`users/${u}/reward_timestamp`);
-    await ref.get().then(snapshot => {
-        if (snapshot.exists()) {
+    const snapshot = await ref.once('value').catch(err => {
+        res = { error: err }
+    })
 
-            res = { lastClaim: snapshot.val() }
+    if (snapshot && snapshot.exists()) {
+        res = { lastClaim: snapshot.val() }
+    } else {
+        res = { error: 'no data found' }
+    }
+
+    return res;
+}
+
+export const getReptTemplates = async (id: string | undefined, 
+    ids: string[] | undefined) => {
+
+    let ref;
+    let queries: any[] = [];
+    let res: any[] = []
+    const db = admin.database();
+
+    
+    if (id) {
+        ref = db.ref(`templates/reptileTemplates/${id}`);
+
+        queries.push(ref);
+    } else if (ids) {
+
+        queries = ids.map(id => db.ref(`templates/reptileTemplates/${id}`));
+    }
+
+    if (id || ids) {
+        await Promise.all(
+            queries.map(query => query.once('value', 
+                (snapshot: DataSnapshot) => {
+
+                if (snapshot.exists()) {
+                    const item: any = snapshot.val();
+
+                    res.push(item);
+                } else {
+                    res.push({ error: 'no data found' })
+                }
+            }, (error: any) => {
+                res.push({ error: error.name })
+            }))
+        );
+    }
+
+    return res;
+}
+
+export const getReptileTemplates = async () => {
+    const reptileTemplatesRef = admin.database().ref('templates/reptileTemplates');
+    let res: any = {}
+
+    const snapshot = await reptileTemplatesRef.once('value').catch(err => {
+        res = { error: err }
+    })
+
+    if (snapshot && snapshot.exists()) {
+        res = snapshot.val();
+    } else {
+        res = { error: 'no data exists' }
+    }
+    return res;
+}
+
+const uploadResizedMedia = async (resizedMedia: ResizedMedia, 
+    name: string): Promise<Data> => {
+
+    const res: Data = {
+        data: '',
+        error: ''
+    }
+
+    const storage = new Storage();
+
+    if (resizedMedia.buffer) {
+
+        await storage.bucket('reptilium-3e457.appspot.com')
+            .file(`resized/${name}`)
+            .save(resizedMedia.buffer, {
+                metadata: {
+                    contentType: resizedMedia.mime
+                }
+            })
+            .then(() => {
+                res.data = 'file saved succesfully';
+            }).catch(err => {
+                res.error = FILESAVEERROR
+            })
+    } else {
+
+        res.error = 'no media to upload';
+    }
+
+    return res;
+}
+
+export const resizeMedia 
+    = async (hash: string | undefined): Promise<Data> => {
+
+    const res: Data = {
+        data: '',
+        error: ''
+    }
+
+    if (hash) {
+
+        const resizedData: Data = await resize(hash);
+    
+        if (!resizedData.error && resizedData.data) {
+    
+            const resizedMedia: ResizedMedia = resizedData.data;
+            const uploadRes: Data 
+                = await uploadResizedMedia(resizedMedia, hash);
+    
+            if (!uploadRes.error && uploadRes.data) {
+    
+                res.data = 'file resized and saved successfully';
+            } else {
+    
+                res.error = uploadRes.error
+            }
         } else {
-            res = { error: 'no data found' }
+    
+            res.error = resizedData.error;
         }
-    }, error => {
-        res = { error }
-    });
+    } else {
 
+        res.error = INVALIDHASH
+    }
+    
     return res;
 }

@@ -6,14 +6,16 @@ import { WaxAuthServer } from "wax-auth";
 import { addHarvestBoosters, addReptile, feedReptile, getFood, getFoodCount, getReptile, 
     getReptiles, getReptileTemplates, getShopItems, getSoulStone, getTgUserName, getUser, 
     getUserAddr, harvestFood, importBurnedFood, redeem, refreshBurns, setReptileTemplates, 
-    setSoulStone, setTgUserName, spellSoulStone, importBurnedReptiles, claimReward, getLastClaim } from './main';
+    setSoulStone, setTgUserName, spellSoulStone, importBurnedReptiles, claimReward, getLastClaim, getReptTemplates, getReptileAsset, getReptileBySchema, resizeMedia } from './main';
 import * as admin from 'firebase-admin';
+import { Data, Schema } from './interfaces';
 const { FirestoreStore } = require('@google-cloud/connect-firestore');
 const key = require('../key.json');
 
 admin.initializeApp({
     credential: admin.credential.cert(key),
     databaseURL: "https://reptilium-3e457-default-rtdb.firebaseio.com",
+    storageBucket: "reptilium-3e457.appspot.com"
 });
 
 const app = express();
@@ -241,6 +243,16 @@ app.post('/getReptiles', async (req, resp) => {
     resp.send(res);
 });
 
+app.post('/getReptilesBySchema', async (req, resp) => {
+    const body = req.body;
+    const addr = body.addr;
+    const schema: Schema = body.schema;
+    // const addr = 'rweue.wam';
+    // const schema = 'pythons'
+    const res = await getReptileBySchema(schema, addr);
+    resp.send(res);
+});
+
 app.post('/getReptile', async (req, resp) => {
     const body = req.body;
     const addr = body.addr;
@@ -249,6 +261,16 @@ app.post('/getReptile', async (req, resp) => {
     const res = await getReptile(addr, templateId);
     resp.send(res);
 });
+
+app.post('/getActiveReptile', async (req, resp) => {
+    const body = req.body;
+    const addr = body.addr;
+    const templateId = body.templateId;
+    const index = body.index;
+
+    const res = await getReptileAsset(addr, templateId, index);
+    resp.send(res);
+})
 
 app.post('/getFood', async (req, resp) => {
     const body = req.body;
@@ -331,6 +353,33 @@ app.post('/getLastClaim', async (req, resp) => {
     const addr = req.body.addr;
     // const addr = 'rweue.wam'
     const res = await getLastClaim(addr);
+    resp.send(res);
+})
+
+app.post('/get_templates', async (req, resp) => {
+    const body = req.body;
+    const id: string | undefined = body.id;
+    const ids: string[] | undefined = body.ids;
+
+    let res = {}
+
+    if (!id && !ids) {
+        res = { error: 'no query found' }
+    } else {
+        res = await getReptTemplates(id, ids);
+    }
+
+    resp.send(res);
+});
+
+app.post('/resize', async (req, resp) => {
+    const body = req.body;
+    const hash: string | undefined = body.hash;
+
+    // const hash: string 
+    //     = `QmPScZyR7Syer4VXbpiQ2wAZgWLUqZYUbTrnDiCyCpaJn3`;
+
+    const res: Data = await resizeMedia(hash);
     resp.send(res);
 })
 

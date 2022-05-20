@@ -1,8 +1,9 @@
 import { Api, JsonRpc, RpcError } from 'eosjs';
 import { JsSignatureProvider } from 'eosjs/dist/eosjs-jssig';
 import { TextEncoder, TextDecoder } from 'text-encoding';
-import { pythonRedeemValues } from './data';
+import { redeemValues } from './data';
 import fetch from 'node-fetch';
+import { Data } from './interfaces';
 require('dotenv').config({ path: '../.env' });
 
 const coinReptilePvk: string | undefined = process.env.COIN_REPTILE_KEY;
@@ -119,7 +120,7 @@ export const mintHarvestNft = async (recipient: string, type: string, enhancer: 
 
     // probabilities within 1000
     const probs: Array<number> = [0, 20, 130, 850];
-    const enhancedProbs: Array<number> = [20, 100, 180, 700];
+    const enhancedProbs: Array<number> = [50, 200, 250, 500];
 
     const typeSchmName = templateStats[type].schema;
     const typeTmptIds = templateStats[type].templateIds;
@@ -152,8 +153,10 @@ export const mintHarvestNft = async (recipient: string, type: string, enhancer: 
     }
 }
 
-export const mintBreedableNft = async (recipient: string, templateId: string) => {
-    const redeemId = pythonRedeemValues[templateId];
+export const mintBreedableNft = async (recipient: string, 
+    templateId: string) => {
+
+    const redeemId = redeemValues[templateId];
     const schemaName = 'game';
     const res = await mintNft(recipient, schemaName, redeemId);
     return res;
@@ -325,5 +328,41 @@ export const getTemplates = async (colName: string, schema: string | boolean) =>
     }
     const res = await fetch(tmptEndpoint).then(resp => resp.json())
         .catch(err => console.log(err));
+    return res;
+}
+
+export const fetcher = async (url: string): Promise<Data> => {
+
+    let res: Data = {
+        data: '',
+        error: ''
+    }
+
+    const r = await fetch(url)
+        .then(resp => resp.json())
+        .catch(err => {
+            res.error = err;
+        })
+
+    res.data = r;
+
+    return res;
+}
+
+export const BufferFetcher = async (url: string): Promise<Data> => {
+
+    let res: Data = {
+        data: '',
+        error: ''
+    }
+
+    const r = await fetch(url)
+        .then(resp => resp.arrayBuffer())
+        .catch(err => {
+            res.error = err;
+        })
+
+    res.data = r;
+
     return res;
 }
