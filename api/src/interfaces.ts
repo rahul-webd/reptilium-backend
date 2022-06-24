@@ -62,7 +62,7 @@ export type Schema = 'pythons' | 'geckos' | 'boas' | 'beardedragons'
 
 export type Data = {
     data: any,
-    error: string
+    error: any
 }
 
 export type MediaType = {
@@ -79,4 +79,36 @@ export type ResizedMedia = {
 export type ResizedMediaRes = {
     data: ResizedMedia,
     error: string
+}
+
+export type Sex = 'male' | 'female'
+
+export type BreedableReptile = {
+    life: number,
+    expired: false
+}
+
+export type BreedableReptiles = {
+    [id: string]: BreedableReptile[]
+}
+
+export type BreedableSortedReptiles = {
+    pythons: BreedableReptiles,
+    geckos: BreedableReptiles,
+    boas: BreedableReptiles,
+    beardedragons: BreedableReptiles
+}
+
+export type Pair = {
+    life: number,
+    male: string,
+    female: string,
+    expired: boolean,
+    breeding: boolean,
+    claimed: boolean,
+    breedingStartedAt: number
+}
+
+export type Pairs = {
+    [id: string]: Pair[]
 }

@@ -4,7 +4,7 @@ import { TextEncoder, TextDecoder } from 'text-encoding';
 import { redeemValues } from './data';
 import fetch from 'node-fetch';
 import { Data } from './interfaces';
-require('dotenv').config({ path: '../.env' });
+require('dotenv').config('../.env');
 
 const coinReptilePvk: string | undefined = process.env.COIN_REPTILE_KEY;
 const tokenSignatureProvider = typeof coinReptilePvk === 'string'
