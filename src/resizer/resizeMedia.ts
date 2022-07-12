@@ -1,8 +1,8 @@
 import { createFFmpeg } from "@ffmpeg/ffmpeg";
-import sharp = require("sharp");
-import { FETCHFAILED, FFMPEGERROR, FFMPEGRESIZEERROR, IMGRESIZEERROR, INVALIDDATA, INVALIDHASH, INVALIDRESIZED, INVALIDTYPE } from "./exceptions"
-import { BufferFetcher } from "./helpers";
-import { Data, MediaType, ResizedMediaRes } from "./interfaces";
+import sharp = require('sharp');
+import { FETCHFAILED, FFMPEGERROR, FFMPEGRESIZEERROR, IMGRESIZEERROR, INVALIDDATA, INVALIDHASH, INVALIDRESIZED, INVALIDTYPE } from "../exceptions"
+import { BufferFetcher } from "../helpers";
+import { Data, MediaType, ResizedMediaRes } from "../schema";
 
 const IPFS: string = `https://ipfs.io/ipfs`;
 

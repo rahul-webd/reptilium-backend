@@ -1,4 +1,4 @@
-import { Data } from "./interfaces";
+import { Data } from "./schema";
 
 export const NOTFOUND = 'data not found';
 export const INVALIDHASH = 'hash is not defined or invalid';

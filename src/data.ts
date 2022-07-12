@@ -1,6 +1,4 @@
-import { simpleCount, simpleNames } from "./interfaces"
-
-export const reptileIds: Array<string> = ['257176', '257172', '257166',  
+export const reptileIds = ['257176', '257172', '257166',  
 '257127', '257091', '257083', '257042', '257028', '257016', '257002', '256947', 
 '256939', '256932', '256887', '256878', '256263', '256222', '254943', '254778',
 '257177', '257173', '257167', '257162', '257156', '257146', '257139', '257128',
@@ -17,7 +15,7 @@ export const reptileIds: Array<string> = ['257176', '257172', '257166',
 '256894', '256274', '256230', '254951', '254844', '257161', '257155', '257145', 
 '257144',]
 
-export const reptileRarites: simpleNames = {
+export const reptileRarites = {
     '257176': 'common', 
     '257172': 'common', 
     '257166': 'common', 
@@ -132,16 +130,7 @@ export const reptileRarites: simpleNames = {
     '254844': 'mythic',
 }
 
-//@ts-ignore
-const breedablePythonIds: simpleNames = {
-    breedableMiina: '479089',
-    breedableKaya: '479087',
-    breedableHarietta: '479086',
-    breedableSandro: '479082',
-    breedableBaan: '479081'
-}
-
-export const redeemValues: simpleNames = {
+export const redeemValues = {
     // pythons
     '257176': '479081', 
     '257172': '479089', 
@@ -282,22 +271,6 @@ export const reptileTemplatesBySex = {
             '256947', '256948', '256949', '256950', '256956'
         ]
     }
-}
-
-export const initialProgress: simpleCount = {
-    common: 0,
-    rare: 75,
-    epic: 150,
-    legendary: 300,
-    mythic: 600
-}
-
-export const initialSoulProgress: simpleCount = {
-    common: 0,
-    rare: 1,
-    epic: 3,
-    legendary: 6,
-    mythic: 10
 }
 
 export const breedableReptileIds = [

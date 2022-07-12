@@ -1,16 +1,16 @@
 import { db } from "..";
 import { Reference, DataSnapshot } from '@firebase/database-types/index'
 
-
 export const addNotification = async (message: string) => {
     const notificationsRef: Reference = db.ref('notifications');
 
     try {
         
-        await notificationsRef.push(message);
+        const r: Reference = await notificationsRef.push(message);
 
         return {
-            success: true
+            success: true,
+            key: r.key
         }
     } catch (error) {
         
@@ -32,7 +32,7 @@ export const getNotifications = async () => {
         if (s.exists()) {
 
             return {
-                notifications: Object.values(s.val()),
+                notifications: s,
             }
         }
     } catch (error) {
@@ -42,5 +42,25 @@ export const getNotifications = async () => {
 
     return {
         notifications: []
+    }
+}
+
+export const remNotification = async (k: string) => {
+    const notificationsRef: Reference = db.ref(`notifications/${k}`);
+
+    try {
+
+        await notificationsRef.remove();
+
+        return {
+            removed: true
+        }
+    } catch (error) {
+
+        console.log(error);
+
+        return {
+            removed: false
+        }
     }
 }
